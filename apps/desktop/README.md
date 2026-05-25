@@ -1,73 +1,29 @@
-# React + TypeScript + Vite
+# Slopeffect Desktop Host
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+This directory contains the production-grade frontend and Tauri integration shell for **Slopeffect** — a premium desktop video editing workspace.
 
-Currently, two official plugins are available:
+## Technology Stack
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+- **Framework**: [React](https://react.dev/) with [TypeScript](https://www.typescriptlang.org/)
+- **Build Engine**: [Vite](https://vite.dev/)
+- **State Management**: [Zustand](https://github.com/pmndrs/zustand)
+- **Tauri Shell**: [Tauri v2](https://v2.tauri.app/) (delivering seamless OS-level window management and native performance)
+- **Styling**: Harmony HSL variables and rich visual CSS tokens with premium glassmorphism interfaces.
 
-## React Compiler
+## Key Subdirectories
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+- `/src`: Active React application core.
+  - `/src/store`: Zustand unified editor state management (`editorStore.ts`).
+  - `/src/services`: Tauri IPC safe communication bridges.
+  - `/src/types`: Strongly-typed definitions for project documents, scenes, layers, tracks, keyframes, and multi-effect stacks.
+- `/src-tauri`: Rust-powered host environment.
+  - `/src-tauri/src/main.rs`: IPC commands (e.g. `probe_media_file`, `pick_media_file`) and event handling loops.
 
-## Expanding the ESLint configuration
+## Active Scripts
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
+Run these scripts from this subdirectory:
 
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
-
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-```
-
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
-
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
-
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-```
+- `npm run dev`: Starts the Vite client dev server.
+- `npm run build`: Type-checks TypeScript (`tsc -b`) and builds production assets (`vite build`).
+- `npm run lint`: Performs lint analysis (`eslint .`).
+- `npm run preview`: Previews built assets locally.

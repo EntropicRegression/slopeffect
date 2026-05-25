@@ -109,6 +109,7 @@ export default function App() {
   const [exportRemainingTime, setExportRemainingTime] = useState('--:--:--');
   const [exportPhase, setExportPhase] = useState('無啟用任務');
   const [isBgExporting, setIsBgExporting] = useState(false);
+  const [exportError, setExportError] = useState<string | null>(null);
   
   // References for dragging
   const rulerRef = useRef<HTMLDivElement>(null);
@@ -601,149 +602,182 @@ export default function App() {
 
 
   // Custom local file probing
-  const handleCustomFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    const isVideo = file.type.startsWith('video');
-    const isAudio = file.type.startsWith('audio');
-    const isSvg = file.name.endsWith('.svg');
-    const type = isVideo ? 'video' : isAudio ? 'audio' : isSvg ? 'svg' : 'image';
-
-    triggerToast(`正在分析素材「${file.name}」的中介資料...`);
-
-    let metadata: any = null;
+  // Native File picker media import and strict ffprobe parsing
+  const handleImportMedia = async () => {
     try {
-      metadata = await safeInvoke<any>('probe_media_file', { path: file.name });
-    } catch (err) {
-      console.warn("Probe failed, fallback to simulation", err);
-    }
+      triggerToast('正在開啟原生檔案選取器...');
+      const filePath = await safeInvoke<string | null>('pick_media_file');
+      if (!filePath) {
+        triggerToast('已取消檔案選取');
+        return;
+      }
 
-    if (!metadata) {
-      const isVid = type === 'video';
-      metadata = {
-        formatName: file.type || 'mp4',
-        durationSeconds: isVid ? 12.4 : 8.5,
-        width: isVid ? 1920 : undefined,
-        height: isVid ? 1080 : undefined,
-        fps: isVid ? 30.0 : undefined,
-        sampleRate: isVid ? 48000 : 44100,
-        channels: 2
-      };
-    }
+      const fileName = filePath.split(/[/\\]/).pop() || 'unknown';
+      const fileExt = fileName.split('.').pop()?.toLowerCase() || '';
 
-    const durationStr = `${metadata.durationSeconds.toFixed(1)}s`;
-    const sizeStr = type === 'video' ? `${metadata.width}x${metadata.height}` : type === 'audio' ? `${metadata.sampleRate.toLocaleString()}Hz` : 'Vector';
+      const isVideo = ['mp4', 'avi', 'mov', 'mkv', 'm4v', 'flv', 'webm'].includes(fileExt);
+      const isAudio = ['mp3', 'wav', 'aac', 'm4a', 'ogg', 'flac'].includes(fileExt);
+      const isSvg = fileExt === 'svg';
 
-    const assetId = `asset-${Math.random().toString(36).substring(2, 11)}`;
-    const blobUrl = type === 'video' || type === 'audio' || type === 'image' ? URL.createObjectURL(file) : undefined;
+      triggerToast(`正在以 ffprobe 分析媒體「${fileName}」...`);
 
-    store.importAsset({
-      id: assetId,
-      name: file.name,
-      type: type as any,
-      size: sizeStr,
-      duration: durationStr,
-      format: type.toUpperCase(),
-      blobUrl
-    });
+      let metadata: any = null;
+      if (isVideo || isAudio) {
+        try {
+          metadata = await safeInvoke<any>('probe_media_file', { path: filePath });
+          if (!metadata || typeof metadata.durationSeconds !== 'number') {
+            throw new Error('未取得有效的中介資料');
+          }
+        } catch (err: any) {
+          console.error("Probing failed:", err);
+          triggerToast(`❌ 導入失敗：ffprobe 無法分析此媒體。格式可能不受支援或環境未設定。`);
+          return; // Strictly abort on failure!
+        }
+      }
 
-    const durationTicks = Math.round(metadata.durationSeconds * TICKS_PER_SECOND);
+      const assetId = `asset-${Math.random().toString(36).substring(2, 11)}`;
 
-    if (type === 'video') {
-      const videoClipId = `clip-video-${assetId}`;
-      const videoClip: Clip = {
-        id: videoClipId,
-        name: `${file.name} (視訊)`,
-        type: 'video',
-        startTicks: store.currentTimeTicks,
-        durationTicks,
-        assetId: assetId,
-        trackId: 'v1',
-        transform: { posX: 960, posY: 540, anchorX: 0.5, anchorY: 0.5, scaleX: 100, scaleY: 100, rotation: 0, opacity: 100, blendMode: 'normal' },
-        keyframes: { position: false, scale: false, rotation: false, opacity: false },
-        keyframeData: [],
-        effects: [],
-        parentClipId: null,
-        enabled: true
-      };
-      
-      const audioClipId = `clip-audio-${assetId}`;
-      const audioClip: Clip = {
-        id: audioClipId,
-        name: `${file.name} (音訊)`,
-        type: 'audio',
-        startTicks: store.currentTimeTicks,
-        durationTicks,
-        assetId: assetId,
-        trackId: 'a1',
-        transform: { posX: 0, posY: 0, anchorX: 0.5, anchorY: 0.5, scaleX: 100, scaleY: 100, rotation: 0, opacity: 100, blendMode: 'normal' },
-        keyframes: { position: false, scale: false, rotation: false, opacity: false },
-        keyframeData: [],
-        effects: [],
-        parentClipId: null,
-        enabled: true
-      };
-      
-      useEditorStore.setState({
-        clips: {
-          ...store.clips,
-          [videoClipId]: videoClip,
-          [audioClipId]: audioClip
-        },
-        selectedClipId: videoClipId
-      });
-      triggerToast(`已成功將影片「${file.name}」自動分離並加入 V1 視訊軌與 A1 音訊軌！`);
-    } else if (type === 'audio') {
-      const audioClipId = `clip-audio-${assetId}`;
-      const audioClip: Clip = {
-        id: audioClipId,
-        name: file.name,
-        type: 'audio',
-        startTicks: store.currentTimeTicks,
-        durationTicks,
-        assetId: assetId,
-        trackId: 'a1',
-        transform: { posX: 0, posY: 0, anchorX: 0.5, anchorY: 0.5, scaleX: 100, scaleY: 100, rotation: 0, opacity: 100, blendMode: 'normal' },
-        keyframes: { position: false, scale: false, rotation: false, opacity: false },
-        keyframeData: [],
-        effects: [],
-        parentClipId: null,
-        enabled: true
-      };
-      useEditorStore.setState({
-        clips: {
-          ...store.clips,
-          [audioClipId]: audioClip
-        },
-        selectedClipId: audioClipId
-      });
-      triggerToast(`已成功將音訊「${file.name}」加入 A1 音訊軌！`);
-    } else if (type === 'svg') {
-      const svgClipId = `clip-svg-${assetId}`;
-      const svgClip: Clip = {
-        id: svgClipId,
-        name: file.name,
-        type: 'svg',
-        startTicks: store.currentTimeTicks,
-        durationTicks,
-        assetId: assetId,
-        trackId: 'v2',
-        transform: { posX: 960, posY: 540, anchorX: 0.5, anchorY: 0.5, scaleX: 75, scaleY: 75, rotation: 0, opacity: 100, blendMode: 'normal' },
-        keyframes: { position: false, scale: false, rotation: false, opacity: false },
-        keyframeData: [],
-        effects: [],
-        parentClipId: null,
-        enabled: true
-      };
-      useEditorStore.setState({
-        clips: {
-          ...store.clips,
-          [svgClipId]: svgClip
-        },
-        selectedClipId: svgClipId
-      });
-      triggerToast(`已成功將向量圖「${file.name}」加入 V2 向量軌！`);
+      if (isSvg) {
+        // SVG files import directly with Vector layout
+        store.importAsset({
+          id: assetId,
+          name: fileName,
+          type: 'svg',
+          size: 'Vector',
+          duration: '--',
+          format: 'SVG',
+          blobUrl: undefined
+        });
+
+        const svgClipId = `clip-svg-${assetId}`;
+        const svgClip: Clip = {
+          id: svgClipId,
+          name: fileName,
+          type: 'svg',
+          startTicks: store.currentTimeTicks,
+          durationTicks: Math.round(5.0 * TICKS_PER_SECOND), // SVG default 5 seconds duration
+          assetId: assetId,
+          trackId: 'v2',
+          transform: { posX: 960, posY: 540, anchorX: 0.5, anchorY: 0.5, scaleX: 75, scaleY: 75, rotation: 0, opacity: 100, blendMode: 'normal' },
+          keyframes: { position: false, scale: false, rotation: false, opacity: false },
+          keyframeData: [],
+          effects: [],
+          parentClipId: null,
+          enabled: true
+        };
+
+        useEditorStore.setState({
+          clips: {
+            ...store.clips,
+            [svgClipId]: svgClip
+          },
+          selectedClipId: svgClipId
+        });
+        triggerToast(`已成功將向量圖「${fileName}」加入 V2 向量軌！`);
+      } else if (isVideo && metadata) {
+        const durationStr = `${metadata.durationSeconds.toFixed(1)}s`;
+        const sizeStr = `${metadata.width || 1920}x${metadata.height || 1080}`;
+
+        store.importAsset({
+          id: assetId,
+          name: fileName,
+          type: 'video',
+          size: sizeStr,
+          duration: durationStr,
+          format: metadata.formatName.toUpperCase().split(',')[0],
+          blobUrl: undefined // Live rendering will be driven by native path in future milestones
+        });
+
+        const durationTicks = Math.round(metadata.durationSeconds * TICKS_PER_SECOND);
+        const videoClipId = `clip-video-${assetId}`;
+        const videoClip: Clip = {
+          id: videoClipId,
+          name: `${fileName} (視訊)`,
+          type: 'video',
+          startTicks: store.currentTimeTicks,
+          durationTicks,
+          assetId: assetId,
+          trackId: 'v1',
+          transform: { posX: 960, posY: 540, anchorX: 0.5, anchorY: 0.5, scaleX: 100, scaleY: 100, rotation: 0, opacity: 100, blendMode: 'normal' },
+          keyframes: { position: false, scale: false, rotation: false, opacity: false },
+          keyframeData: [],
+          effects: [],
+          parentClipId: null,
+          enabled: true
+        };
+
+        const audioClipId = `clip-audio-${assetId}`;
+        const audioClip: Clip = {
+          id: audioClipId,
+          name: `${fileName} (音訊)`,
+          type: 'audio',
+          startTicks: store.currentTimeTicks,
+          durationTicks,
+          assetId: assetId,
+          trackId: 'a1',
+          transform: { posX: 0, posY: 0, anchorX: 0.5, anchorY: 0.5, scaleX: 100, scaleY: 100, rotation: 0, opacity: 100, blendMode: 'normal' },
+          keyframes: { position: false, scale: false, rotation: false, opacity: false },
+          keyframeData: [],
+          effects: [],
+          parentClipId: null,
+          enabled: true
+        };
+
+        useEditorStore.setState({
+          clips: {
+            ...store.clips,
+            [videoClipId]: videoClip,
+            [audioClipId]: audioClip
+          },
+          selectedClipId: videoClipId
+        });
+        triggerToast(`已成功將影片「${fileName}」自動分離並加入 V1 視訊軌與 A1 音訊軌！`);
+      } else if (isAudio && metadata) {
+        const durationStr = `${metadata.durationSeconds.toFixed(1)}s`;
+        const sizeStr = `${(metadata.sampleRate || 44100).toLocaleString()}Hz`;
+
+        store.importAsset({
+          id: assetId,
+          name: fileName,
+          type: 'audio',
+          size: sizeStr,
+          duration: durationStr,
+          format: metadata.formatName.toUpperCase().split(',')[0],
+          blobUrl: undefined
+        });
+
+        const durationTicks = Math.round(metadata.durationSeconds * TICKS_PER_SECOND);
+        const audioClipId = `clip-audio-${assetId}`;
+        const audioClip: Clip = {
+          id: audioClipId,
+          name: fileName,
+          type: 'audio',
+          startTicks: store.currentTimeTicks,
+          durationTicks,
+          assetId: assetId,
+          trackId: 'a1',
+          transform: { posX: 0, posY: 0, anchorX: 0.5, anchorY: 0.5, scaleX: 100, scaleY: 100, rotation: 0, opacity: 100, blendMode: 'normal' },
+          keyframes: { position: false, scale: false, rotation: false, opacity: false },
+          keyframeData: [],
+          effects: [],
+          parentClipId: null,
+          enabled: true
+        };
+
+        useEditorStore.setState({
+          clips: {
+            ...store.clips,
+            [audioClipId]: audioClip
+          },
+          selectedClipId: audioClipId
+        });
+        triggerToast(`已成功將音訊「${fileName}」加入 A1 音訊軌！`);
+      } else {
+        triggerToast(`❌ 導入失敗：不支援的檔案格式「.${fileExt}」`);
+      }
+    } catch (error: any) {
+      console.error("Custom import error:", error);
+      triggerToast(`❌ 導入媒體發生異常：${error?.toString()}`);
     }
   };
 
@@ -769,49 +803,38 @@ export default function App() {
     }
   };
 
-  // Render / Export simulation
-  const handleStartRender = () => {
+  // Render / Export backend call stub
+  const handleStartRender = async () => {
     setIsExporting(true);
+    setExportError(null);
     setExportProgress(0);
-    store.setCurrentTimeTicks(0);
-    let elapsed = 0;
-    
-    const interval = setInterval(() => {
-      elapsed += 0.2;
-      setExportProgress((prev) => {
-        const next = prev + 2;
-        
-        const totalTicks = 12.4 * TICKS_PER_SECOND;
-        const currentTicks = Math.round((Math.min(100, next) / 100) * totalTicks);
-        store.setCurrentTimeTicks(currentTicks);
+    setExportElapsedTime('00:00:00');
+    setExportRemainingTime('--:--:--');
+    setExportPhase('正在準備匯出任務...');
 
-        if (next >= 100) {
-          clearInterval(interval);
-          setIsExporting(false);
-          triggerToast('🎉 影片渲染成功！恭喜！');
-          return 100;
-        }
-        
-        if (next <= 10) setExportPhase('正在分析序列 ticks 軌道 (Analyzing)...');
-        else if (next <= 45) setExportPhase(`正在渲染 V1 Base Video (影格: ${Math.round(next * 30)} / 3000)`);
-        else if (next <= 75) setExportPhase('正在疊加 V2 SVG 向量圖層與 Keyframe 插值...');
-        else if (next <= 90) setExportPhase('正在混合 A1 背景音樂音軌 (Audio Mixdown)...');
-        else setExportPhase('正在組合 MP4 (H.264 / AAC) 串流 sidecar 儲存...');
-        
-        return next;
+    try {
+      // Send IPC request to start the export job
+      const resultJobId = await safeInvoke<string>('start_export_project', {
+        projectJson: JSON.stringify(store),
+        exportPath,
+        preset: exportPreset
       });
-      
-      const pad = (n: number) => String(n).padStart(2, '0');
-      const rem = Math.max(0, 10 - Math.round(elapsed));
-      setExportElapsedTime(`00:00:${pad(Math.floor(elapsed))}`);
-      setExportRemainingTime(`00:00:${pad(rem)}`);
-    }, 150);
+      // Stub implementation won't succeed, but in the future it would return a jobId.
+      setIsExporting(false);
+      setExportPhase('渲染完成，輸出檔案已儲存。');
+      setExportProgress(100);
+      triggerToast(`🎉 影片渲染成功！任務 ID: ${resultJobId}`);
+    } catch (err: any) {
+      console.warn("Export started but returned an error:", err);
+      setIsExporting(false);
+      setExportError(err?.toString() || '匯出渲染失敗');
+      setExportPhase('功能未支援 (Unsupported)');
+      triggerToast('❌ 匯出功能目前尚未支援 (尚未與後端連結)');
+    }
   };
 
   const handleStartBgRender = () => {
-    setIsBgExporting(true);
-    setShowExportModal(false);
-    triggerToast('渲染任務已推送到背景執行。您可繼續在工作空間內編輯。');
+    triggerToast('❌ 目前後端未連接，不支援背景渲染。');
   };
 
   // Drag select clip offset calc
@@ -1516,14 +1539,7 @@ export default function App() {
         <section className="panel asset-panel">
           <div className="panel-header">
             <h3><FolderOpen size={14} /> 素材庫 (Media Library)</h3>
-            <button className="icon-btn-accent" onClick={() => document.getElementById('native-file-picker')?.click()} title="匯入媒體檔案"><Plus size={12} /> 匯入</button>
-            <input 
-              type="file" 
-              id="native-file-picker" 
-              style={{ display: 'none' }} 
-              onChange={handleCustomFileSelect}
-              accept="video/*,audio/*,.svg"
-            />
+            <button className="icon-btn-accent" onClick={handleImportMedia} title="匯入媒體檔案"><Plus size={12} /> 匯入</button>
           </div>
           <div className="panel-body">
             <div className="assets-grid">
@@ -2288,14 +2304,56 @@ export default function App() {
                   </div>
 
                   <div className="progress-panel-details">
-                    <div className="progress-bar-container">
-                      <div className="progress-bar-fill" style={{ width: `${exportProgress}%` }}></div>
-                    </div>
+                    {exportError ? (
+                      <div className="export-error-card" style={{
+                        padding: '12px',
+                        borderRadius: '6px',
+                        backgroundColor: 'rgba(239, 68, 68, 0.08)',
+                        border: '1px solid rgba(239, 68, 68, 0.25)',
+                        marginBottom: '12px',
+                        fontSize: '11px',
+                        color: '#f87171'
+                      }}>
+                        <div style={{ fontWeight: 600, display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px' }}>
+                          <span style={{ display: 'inline-block', width: '6px', height: '6px', borderRadius: '50%', backgroundColor: '#ef4444' }}></span>
+                          後端連接錯誤 / 功能未支援 (Unsupported)
+                        </div>
+                        <p style={{ color: 'var(--text-muted)', lineHeight: '1.4', margin: '4px 0 8px 0' }}>
+                          {exportError}
+                        </p>
+                        <div style={{
+                          fontSize: '10px',
+                          borderTop: '1px dashed rgba(255,255,255,0.06)',
+                          paddingTop: '6px',
+                          color: 'var(--text-dark)'
+                        }}>
+                          <span style={{ fontWeight: 600 }}>Tauri IPC 規劃合約:</span>
+                          <ul style={{ margin: '4px 0 0 12px', listStyleType: 'disc', color: 'var(--text-muted)' }}>
+                            <li>命令: <code>start_export_project</code></li>
+                            <li>命令: <code>cancel_export</code></li>
+                            <li>事件監聽: <code>export_progress</code></li>
+                          </ul>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="progress-bar-container">
+                        <div className="progress-bar-fill" style={{ width: `${exportProgress}%` }}></div>
+                      </div>
+                    )}
                     
                     <div className="render-stats">
                       <div className="stat-row">
+                        <span className="label">任務狀態 (Status):</span>
+                        <span className="value" style={{
+                          fontWeight: 600,
+                          color: isExporting ? '#6366F1' : exportError ? '#EF4444' : exportProgress === 100 ? '#10B981' : 'var(--text-muted)'
+                        }}>
+                          {isExporting ? '執行中 (running)' : exportError ? '未支援 (unsupported)' : exportProgress === 100 ? '已完成 (completed)' : '就緒 (ready)'}
+                        </span>
+                      </div>
+                      <div className="stat-row">
                         <span className="label">渲染進度:</span>
-                        <span className="value accent">{isExporting ? `${exportProgress}% (正在渲染)` : '準備中'}</span>
+                        <span className="value accent">{exportProgress}%</span>
                       </div>
                       <div className="stat-row">
                         <span className="label">經過時間:</span>
@@ -2317,7 +2375,7 @@ export default function App() {
 
             <div className="export-footer">
               <button className="footer-btn ghost-btn" onClick={() => setShowExportModal(false)}>取消關閉</button>
-              <button className="footer-btn secondary-btn" onClick={handleStartBgRender} disabled={!isExporting}>背景渲染</button>
+              <button className="footer-btn secondary-btn" onClick={handleStartBgRender} disabled={!isExporting || !!exportError}>背景渲染</button>
               <button className="footer-btn primary-gradient-btn" onClick={handleStartRender} disabled={isExporting}>開始渲染</button>
             </div>
           </div>

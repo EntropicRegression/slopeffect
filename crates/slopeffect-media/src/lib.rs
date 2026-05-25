@@ -1,5 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::hash::{Hash, Hasher};
+use std::collections::hash_map::DefaultHasher;
 use serde::{Deserialize, Serialize};
 use anyhow::{anyhow, Result};
 
@@ -36,10 +38,8 @@ pub fn probe_file<P: AsRef<Path>>(file_path: P) -> Result<MediaMetadata> {
       let err_msg = String::from_utf8_lossy(&out.stderr);
       return Err(anyhow!("ffprobe failed: {}", err_msg));
     }
-    Err(_e) => {
-      // Fallback: If ffprobe is not installed on system path, return simulated high-fidelity metadata
-      // to ensure the app continues to operate flawlessly for testing!
-      return get_simulated_metadata(&path_str);
+    Err(e) => {
+      return Err(anyhow!("ffprobe tool is not installed or not found on the system PATH. Error: {}", e));
     }
   };
 
@@ -107,55 +107,6 @@ pub fn probe_file<P: AsRef<Path>>(file_path: P) -> Result<MediaMetadata> {
   })
 }
 
-/// Fallback simulation method for development environment when ffprobe is not installed
-fn get_simulated_metadata(path_str: &str) -> Result<MediaMetadata> {
-  let lower_path = path_str.to_lowercase();
-  if lower_path.contains("ocean") || lower_path.contains("sunset") || lower_path.ends_match(".mp4") {
-    // Simulated video
-    Ok(MediaMetadata {
-      format_name: "mov,mp4,m4a,3gp,3g2,mj2".to_string(),
-      duration_seconds: 12.4,
-      width: Some(1920),
-      height: Some(1080),
-      fps: Some(30.0),
-      sample_rate: Some(48000),
-      channels: Some(2),
-    })
-  } else if lower_path.contains("voice") || lower_path.contains("drone") || lower_path.ends_match(".wav") || lower_path.ends_match(".mp3") {
-    // Simulated audio
-    Ok(MediaMetadata {
-      format_name: "wav".to_string(),
-      duration_seconds: 8.5,
-      width: None,
-      height: None,
-      fps: None,
-      sample_rate: Some(44100),
-      channels: Some(1),
-    })
-  } else {
-    // Default fallback
-    Ok(MediaMetadata {
-      format_name: "unknown".to_string(),
-      duration_seconds: 5.0,
-      width: None,
-      height: None,
-      fps: None,
-      sample_rate: None,
-      channels: None,
-    })
-  }
-}
-
-// Extension helper for simple matching in fallback
-trait EndsMatch {
-  fn ends_match(&self, suffix: &str) -> bool;
-}
-impl EndsMatch for String {
-  fn ends_match(&self, suffix: &str) -> bool {
-    self.ends_with(suffix)
-  }
-}
-
 // ==========================================================================
 // Cache & Thumbnail Management (Milestone 3 - Task 3.2 & 3.3)
 // ==========================================================================
@@ -189,12 +140,10 @@ impl CacheManager {
   /// Calculates a unique cached filename key based on the absolute file path
   pub fn get_cache_path<P: AsRef<Path>>(&self, file_path: P) -> PathBuf {
     let path_str = file_path.as_ref().to_string_lossy();
-    // Quick hash key simulation to avoid full MD5 dependencies
-    let mut sum: u32 = 0;
-    for c in path_str.bytes() {
-      sum = sum.wrapping_add(c as u32).wrapping_mul(31);
-    }
-    let key = format!("thumb_{:08x}.jpg", sum);
+    let mut hasher = DefaultHasher::new();
+    path_str.hash(&mut hasher);
+    let hash_val = hasher.finish();
+    let key = format!("thumb_{:016x}.jpg", hash_val);
     self.cache_dir.join(key)
   }
 
@@ -219,13 +168,11 @@ impl CacheManager {
 
     match output {
       Ok(out) if out.status.success() => Ok(dest_path),
-      _ => {
-        // Fallback: copy a fallback placeholder to the cache path to ensure the UI still renders elegantly
-        // if ffmpeg is not present on developer's system path!
-        let fallback_content = b"SIMULATED_THUMBNAIL_JPEG_DATA_PLACEHOLDER";
-        std::fs::write(&dest_path, fallback_content)?;
-        Ok(dest_path)
+      Ok(out) => {
+        let err_msg = String::from_utf8_lossy(&out.stderr);
+        Err(anyhow!("ffmpeg thumbnail generation failed: {}", err_msg))
       }
+      Err(e) => Err(anyhow!("ffmpeg tool is not installed or not found on PATH. Error: {}", e))
     }
   }
 }
