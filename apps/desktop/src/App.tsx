@@ -81,7 +81,6 @@ export default function App() {
   const store = useEditorStore();
   
   // Local UI states
-  const [showImportDialog, setShowImportDialog] = useState(false);
   const [showAddSceneDialog, setShowAddSceneDialog] = useState(false);
   const [showExportModal, setShowExportModal] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
@@ -100,6 +99,7 @@ export default function App() {
   const [newSceneHeight, setNewSceneHeight] = useState(1080);
   
   // Export inputs & progress
+  const [exportPath, setExportPath] = useState('C:/Projects/Slopeffect/Exports/');
   const [exportFilename, setExportFilename] = useState('my_awesome_edit_v1');
   const [exportPreset, setExportPreset] = useState('YouTube Full HD 1080p (Fast H.264)');
   const [exportBitrate, setExportBitrate] = useState(12);
@@ -127,6 +127,26 @@ export default function App() {
 
   // Active clip
   const activeClip = store.selectedClipId ? store.clips[store.selectedClipId] : null;
+
+  // Evaluated values for active clip transform properties taking keyframes into account
+  const evaluatedPosX = activeClip 
+    ? (activeClip.keyframes.position ? evaluatePropertyAtTime(activeClip, 'posX', store.currentTimeTicks) : activeClip.transform.posX)
+    : 960;
+  const evaluatedPosY = activeClip 
+    ? (activeClip.keyframes.position ? evaluatePropertyAtTime(activeClip, 'posY', store.currentTimeTicks) : activeClip.transform.posY)
+    : 540;
+  const evaluatedScaleX = activeClip 
+    ? (activeClip.keyframes.scale ? evaluatePropertyAtTime(activeClip, 'scaleX', store.currentTimeTicks) : activeClip.transform.scaleX)
+    : 100;
+  const evaluatedScaleY = activeClip 
+    ? (activeClip.keyframes.scale ? evaluatePropertyAtTime(activeClip, 'scaleY', store.currentTimeTicks) : activeClip.transform.scaleY)
+    : 100;
+  const evaluatedRotation = activeClip 
+    ? (activeClip.keyframes.rotation ? evaluatePropertyAtTime(activeClip, 'rotation', store.currentTimeTicks) : activeClip.transform.rotation)
+    : 0;
+  const evaluatedOpacity = activeClip 
+    ? (activeClip.keyframes.opacity ? evaluatePropertyAtTime(activeClip, 'opacity', store.currentTimeTicks) : activeClip.transform.opacity)
+    : 100;
 
   // Active clip asset properties for dynamic bounding box calculation
   const activeAsset = activeClip ? store.assets.find(a => a.id === activeClip.assetId) : null;
@@ -578,111 +598,7 @@ export default function App() {
     return ticks;
   };
 
-  // Import Asset action
-  const handleImportPredefined = (assetId: string, name: string, type: any, size: string, duration: string) => {
-    store.importAsset({ id: assetId, name, type, size, duration, format: type.toUpperCase() });
-    
-    const durationSeconds = parseFloat(duration) || 10;
-    const durationTicks = Math.round(durationSeconds * TICKS_PER_SECOND);
-    
-    if (type === 'video') {
-      const videoClipId = `clip-video-${assetId}`;
-      const videoClip: Clip = {
-        id: videoClipId,
-        name: `${name} (視訊)`,
-        type: 'video',
-        startTicks: store.currentTimeTicks,
-        durationTicks,
-        assetId: assetId,
-        trackId: 'v1',
-        transform: { posX: 960, posY: 540, anchorX: 0.5, anchorY: 0.5, scaleX: 100, scaleY: 100, rotation: 0, opacity: 100, blendMode: 'normal' },
-        keyframes: { position: false, scale: false, rotation: false, opacity: false },
-        keyframeData: [],
-        effects: [],
-        parentClipId: null,
-        enabled: true
-      };
-      
-      const audioClipId = `clip-audio-${assetId}`;
-      const audioClip: Clip = {
-        id: audioClipId,
-        name: `${name} (音訊)`,
-        type: 'audio',
-        startTicks: store.currentTimeTicks,
-        durationTicks,
-        assetId: assetId,
-        trackId: 'a1',
-        transform: { posX: 0, posY: 0, anchorX: 0.5, anchorY: 0.5, scaleX: 100, scaleY: 100, rotation: 0, opacity: 100, blendMode: 'normal' },
-        keyframes: { position: false, scale: false, rotation: false, opacity: false },
-        keyframeData: [],
-        effects: [],
-        parentClipId: null,
-        enabled: true
-      };
-      
-      useEditorStore.setState({
-        clips: {
-          ...store.clips,
-          [videoClipId]: videoClip,
-          [audioClipId]: audioClip
-        },
-        selectedClipId: videoClipId
-      });
-      triggerToast(`已成功將影片「${name}」自動分離並加入 V1 視訊軌與 A1 音訊軌！`);
-    } else if (type === 'audio') {
-      const audioClipId = `clip-audio-${assetId}`;
-      const audioClip: Clip = {
-        id: audioClipId,
-        name: name,
-        type: 'audio',
-        startTicks: store.currentTimeTicks,
-        durationTicks,
-        assetId: assetId,
-        trackId: 'a1',
-        transform: { posX: 0, posY: 0, anchorX: 0.5, anchorY: 0.5, scaleX: 100, scaleY: 100, rotation: 0, opacity: 100, blendMode: 'normal' },
-        keyframes: { position: false, scale: false, rotation: false, opacity: false },
-        keyframeData: [],
-        effects: [],
-        parentClipId: null,
-        enabled: true
-      };
-      useEditorStore.setState({
-        clips: {
-          ...store.clips,
-          [audioClipId]: audioClip
-        },
-        selectedClipId: audioClipId
-      });
-      triggerToast(`已成功將音訊「${name}」加入 A1 音訊軌！`);
-    } else if (type === 'svg') {
-      const svgClipId = `clip-svg-${assetId}`;
-      const svgClip: Clip = {
-        id: svgClipId,
-        name: name,
-        type: 'svg',
-        startTicks: store.currentTimeTicks,
-        durationTicks,
-        assetId: assetId,
-        trackId: 'v2',
-        transform: { posX: 960, posY: 540, anchorX: 0.5, anchorY: 0.5, scaleX: 75, scaleY: 75, rotation: 0, opacity: 100, blendMode: 'normal' },
-        keyframes: { position: false, scale: false, rotation: false, opacity: false },
-        keyframeData: [],
-        effects: [],
-        parentClipId: null,
-        enabled: true
-      };
-      useEditorStore.setState({
-        clips: {
-          ...store.clips,
-          [svgClipId]: svgClip
-        },
-        selectedClipId: svgClipId
-      });
-      triggerToast(`已成功將向量圖「${name}」加入 V2 向量軌！`);
-    }
 
-    setShowImportDialog(false);
-  };
 
   // Custom local file probing
   const handleCustomFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -829,8 +745,6 @@ export default function App() {
       });
       triggerToast(`已成功將向量圖「${file.name}」加入 V2 向量軌！`);
     }
-
-    setShowImportDialog(false);
   };
 
   // Add Scene action
@@ -844,16 +758,33 @@ export default function App() {
     triggerToast(`已成功切換至新建立場景：${newSceneName}`);
   };
 
+  const handleBrowseFolder = async () => {
+    triggerToast('正在選擇輸出資料夾...');
+    const path = await safeInvoke<string | null>('pick_export_directory');
+    if (path) {
+      setExportPath(path.endsWith('/') || path.endsWith('\\') ? path : `${path}/`);
+      triggerToast(`輸出路徑已設定為：${path}`);
+    } else {
+      triggerToast('已取消選擇資料夾');
+    }
+  };
+
   // Render / Export simulation
   const handleStartRender = () => {
     setIsExporting(true);
     setExportProgress(0);
+    store.setCurrentTimeTicks(0);
     let elapsed = 0;
     
     const interval = setInterval(() => {
       elapsed += 0.2;
       setExportProgress((prev) => {
         const next = prev + 2;
+        
+        const totalTicks = 12.4 * TICKS_PER_SECOND;
+        const currentTicks = Math.round((Math.min(100, next) / 100) * totalTicks);
+        store.setCurrentTimeTicks(currentTicks);
+
         if (next >= 100) {
           clearInterval(interval);
           setIsExporting(false);
@@ -1291,7 +1222,7 @@ export default function App() {
   };
 
   // Rendering active layered visual clips in Preview monitor
-  const renderPreviewClips = () => {
+  const renderPreviewClips = (isMini = false) => {
     const activeVisualClips = Object.values(store.clips).filter(
       c => c.enabled && 
       (c.type === 'video' || c.type === 'svg') && 
@@ -1300,7 +1231,7 @@ export default function App() {
     );
 
     return activeVisualClips.map(clip => {
-      const isSelected = store.selectedClipId === clip.id;
+      const isSelected = !isMini && store.selectedClipId === clip.id;
       const track = store.tracks[clip.trackId];
       if (track?.muted) return null;
 
@@ -1338,9 +1269,9 @@ export default function App() {
             transform: `translate(-50%, -50%) translate(${tx}%, ${ty}%) rotate(${chained.rotation}deg)`,
             opacity: chained.opacity / 100,
             zIndex: 10 + (10 - (track?.order || 0)),
-            pointerEvents: store.activeTool === 'select' ? 'auto' : 'none'
+            pointerEvents: !isMini && store.activeTool === 'select' ? 'auto' : 'none'
           }}
-          onMouseDown={(e) => {
+          onMouseDown={isMini ? undefined : (e) => {
             store.selectClip(clip.id);
             setIsDraggingTransform(true);
             setTransformDragStart({ x: e.clientX, y: e.clientY });
@@ -1585,7 +1516,14 @@ export default function App() {
         <section className="panel asset-panel">
           <div className="panel-header">
             <h3><FolderOpen size={14} /> 素材庫 (Media Library)</h3>
-            <button className="icon-btn-accent" onClick={() => setShowImportDialog(true)} title="匯入媒體檔案"><Plus size={12} /> 匯入</button>
+            <button className="icon-btn-accent" onClick={() => document.getElementById('native-file-picker')?.click()} title="匯入媒體檔案"><Plus size={12} /> 匯入</button>
+            <input 
+              type="file" 
+              id="native-file-picker" 
+              style={{ display: 'none' }} 
+              onChange={handleCustomFileSelect}
+              accept="video/*,audio/*,.svg"
+            />
           </div>
           <div className="panel-body">
             <div className="assets-grid">
@@ -1742,19 +1680,19 @@ export default function App() {
                       <span>X</span>
                       <input
                         type="number"
-                        value={activeClip.transform.posX}
+                        value={evaluatedPosX}
                         onChange={(e) => store.updateClipTransform(activeClip.id, { posX: parseInt(e.target.value) || 0 })}
                       />
-                      {renderKfIndicator('posX', activeClip.transform.posX)}
+                      {renderKfIndicator('posX', evaluatedPosX)}
                     </div>
                     <div className="num-input-group" style={{ display: 'flex', alignItems: 'center' }}>
                       <span>Y</span>
                       <input
                         type="number"
-                        value={activeClip.transform.posY}
+                        value={evaluatedPosY}
                         onChange={(e) => store.updateClipTransform(activeClip.id, { posY: parseInt(e.target.value) || 0 })}
                       />
-                      {renderKfIndicator('posY', activeClip.transform.posY)}
+                      {renderKfIndicator('posY', evaluatedPosY)}
                     </div>
                   </div>
 
@@ -1770,21 +1708,21 @@ export default function App() {
                       <span>X</span>
                       <input
                         type="number"
-                        value={activeClip.transform.scaleX}
+                        value={evaluatedScaleX}
                         onChange={(e) => store.updateClipTransform(activeClip.id, { scaleX: parseInt(e.target.value) || 0 })}
                       />
                       <span style={{ paddingRight: '4px', fontSize: '10px', color: 'var(--text-dark)' }}>%</span>
-                      {renderKfIndicator('scaleX', activeClip.transform.scaleX)}
+                      {renderKfIndicator('scaleX', evaluatedScaleX)}
                     </div>
                     <div className="num-input-group" style={{ display: 'flex', alignItems: 'center' }}>
                       <span>Y</span>
                       <input
                         type="number"
-                        value={activeClip.transform.scaleY}
+                        value={evaluatedScaleY}
                         onChange={(e) => store.updateClipTransform(activeClip.id, { scaleY: parseInt(e.target.value) || 0 })}
                       />
                       <span style={{ paddingRight: '4px', fontSize: '10px', color: 'var(--text-dark)' }}>%</span>
-                      {renderKfIndicator('scaleY', activeClip.transform.scaleY)}
+                      {renderKfIndicator('scaleY', evaluatedScaleY)}
                     </div>
                   </div>
 
@@ -1799,11 +1737,11 @@ export default function App() {
                     <div className="num-input-group" style={{ display: 'flex', alignItems: 'center' }}>
                       <input
                         type="number"
-                        value={activeClip.transform.rotation}
+                        value={evaluatedRotation}
                         onChange={(e) => store.updateClipTransform(activeClip.id, { rotation: parseInt(e.target.value) || 0 })}
                       />
                       <span style={{ paddingRight: '12px' }}>°</span>
-                      {renderKfIndicator('rotation', activeClip.transform.rotation)}
+                      {renderKfIndicator('rotation', evaluatedRotation)}
                     </div>
                   </div>
 
@@ -1818,11 +1756,11 @@ export default function App() {
                     <div className="num-input-group" style={{ display: 'flex', alignItems: 'center' }}>
                       <input
                         type="number"
-                        value={activeClip.transform.opacity}
+                        value={evaluatedOpacity}
                         onChange={(e) => store.updateClipTransform(activeClip.id, { opacity: parseInt(e.target.value) || 0 })}
                       />
                       <span style={{ paddingRight: '12px' }}>%</span>
-                      {renderKfIndicator('opacity', activeClip.transform.opacity)}
+                      {renderKfIndicator('opacity', evaluatedOpacity)}
                     </div>
                   </div>
                 </div>
@@ -2214,63 +2152,7 @@ export default function App() {
         </div>
       </footer>
 
-      {/* Simulated OS Import File Dialog */}
-      {showImportDialog && (
-        <div className="file-dialog-overlay">
-          <div className="file-dialog-box">
-            <div className="dialog-header">
-              <h4>匯入多媒體素材檔案</h4>
-              <button className="dialog-close" onClick={() => setShowImportDialog(false)}><X size={16} /></button>
-            </div>
-            <div className="dialog-body">
-              <p className="dialog-subtitle">請選擇要載入至專案資產庫的本機影片、音軌或向量圖片：</p>
-              <div className="import-options-grid">
-                
-                {/* Custom File Picker option */}
-                <div 
-                  className="import-option-card custom-file-import" 
-                  onClick={() => document.getElementById('native-file-picker')?.click()}
-                  style={{ border: '1px dashed var(--primary)', justifyContent: 'center', background: 'rgba(99, 102, 241, 0.03)', padding: '12px' }}
-                >
-                  <FolderOpen size={16} style={{ color: 'var(--primary)' }} />
-                  <span style={{ fontWeight: 600, color: 'var(--primary)' }}>選擇自訂本機檔案...</span>
-                  <input 
-                    type="file" 
-                    id="native-file-picker" 
-                    style={{ display: 'none' }} 
-                    onChange={handleCustomFileSelect}
-                    accept="video/*,audio/*,.svg"
-                  />
-                </div>
 
-                <div className="import-option-card" onClick={() => handleImportPredefined('clip-ocean', 'cinematic_ocean.mp4', 'video', '1920x1080', '12.4s')}>
-                  <div className="mock-thumb ocean-thumb"></div>
-                  <div className="option-info">
-                    <span className="name">cinematic_ocean.mp4</span>
-                    <span className="meta">影片 | 1920x1080 | 12.4s</span>
-                  </div>
-                </div>
-
-                <div className="import-option-card" onClick={() => handleImportPredefined('clip-voice', 'narration_voiceover.wav', 'audio', '44,100Hz', '8.5s')}>
-                  <div className="mock-thumb audio-thumb"><Mic size={14} /></div>
-                  <div className="option-info">
-                    <span className="name">narration_voiceover.wav</span>
-                    <span className="meta">音訊 | 44.1kHz | 8.5s</span>
-                  </div>
-                </div>
-
-                <div className="import-option-card" onClick={() => handleImportPredefined('clip-triangle', 'abstract_triangle.svg', 'svg', 'Vector', 'Static')}>
-                  <div className="mock-thumb vector-thumb"><Triangle size={14} /></div>
-                  <div className="option-info">
-                    <span className="name">abstract_triangle.svg</span>
-                    <span className="meta">圖像 | 向量 | 靜態 SVG</span>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* Simulated Add Scene Modal Overlay */}
       {showAddSceneDialog && (
@@ -2329,8 +2211,8 @@ export default function App() {
                     <div className="grid-item full-width">
                       <label>輸出路徑</label>
                       <div className="input-browse-group">
-                        <input type="text" className="dark-input" value="C:/Projects/Slopeffect/Exports/" readOnly />
-                        <button className="browse-btn" onClick={() => triggerToast('模擬系統對話框：輸出路徑保持默認')}><Folder size={11} /> 瀏覽</button>
+                        <input type="text" className="dark-input" value={exportPath} onChange={(e) => setExportPath(e.target.value)} />
+                        <button className="browse-btn" onClick={handleBrowseFolder}><Folder size={11} /> 瀏覽</button>
                       </div>
                     </div>
                     <div className="grid-item full-width">
@@ -2383,7 +2265,10 @@ export default function App() {
               <div className="export-right-progress">
                 <div className="render-preview-card">
                   <div className="render-thumb-wrapper">
-                    <div className="render-thumbnail"></div>
+                    <div className="preview-screen mini" style={{ width: '100%', height: '100%', position: 'absolute', top: 0, left: 0, overflow: 'hidden', backgroundColor: '#000000' }}>
+                      <div className="video-bg-layer" style={{ opacity: 1, backgroundColor: '#000000' }}></div>
+                      {renderPreviewClips(true)}
+                    </div>
                     {isExporting && (
                       <div className="render-spinner-container">
                         <svg className="progress-ring" width="120" height="120">

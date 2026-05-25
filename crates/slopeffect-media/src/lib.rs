@@ -36,7 +36,7 @@ pub fn probe_file<P: AsRef<Path>>(file_path: P) -> Result<MediaMetadata> {
       let err_msg = String::from_utf8_lossy(&out.stderr);
       return Err(anyhow!("ffprobe failed: {}", err_msg));
     }
-    Err(e) => {
+    Err(_e) => {
       // Fallback: If ffprobe is not installed on system path, return simulated high-fidelity metadata
       // to ensure the app continues to operate flawlessly for testing!
       return get_simulated_metadata(&path_str);

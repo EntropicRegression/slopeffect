@@ -300,13 +300,59 @@ export const useEditorStore = create<EditorState>((set) => ({
   updateClipTransform: (clipId, newTransform) => set((state) => {
     const clip = state.clips[clipId];
     if (!clip) return {};
+    
+    let keyframeData = [...(clip.keyframeData || [])];
+    const keys = Object.keys(newTransform) as (keyof Transform)[];
+    
+    keys.forEach(key => {
+      let isKeyframeEnabled = false;
+      let propName: Keyframe['property'] | null = null;
+      
+      if (key === 'posX' || key === 'posY') {
+        isKeyframeEnabled = !!clip.keyframes.position;
+        propName = key;
+      } else if (key === 'scaleX' || key === 'scaleY') {
+        isKeyframeEnabled = !!clip.keyframes.scale;
+        propName = key;
+      } else if (key === 'rotation') {
+        isKeyframeEnabled = !!clip.keyframes.rotation;
+        propName = key;
+      } else if (key === 'opacity') {
+        isKeyframeEnabled = !!clip.keyframes.opacity;
+        propName = key;
+      }
+      
+      if (isKeyframeEnabled && propName) {
+        const val = newTransform[key] as number;
+        const existingKfIdx = keyframeData.findIndex(kf => kf.property === propName && kf.timeTicks === state.currentTimeTicks);
+        if (existingKfIdx !== -1) {
+          keyframeData[existingKfIdx] = {
+            ...keyframeData[existingKfIdx],
+            value: val
+          };
+        } else {
+          const id = `kf-${Math.random().toString(36).substring(2, 9)}`;
+          keyframeData.push({
+            id,
+            timeTicks: state.currentTimeTicks,
+            property: propName,
+            value: val,
+            easing: 'linear'
+          });
+        }
+      }
+    });
+    
+    keyframeData.sort((a, b) => a.timeTicks - b.timeTicks);
+    
     return {
       isSaved: false,
       clips: {
         ...state.clips,
         [clipId]: {
           ...clip,
-          transform: { ...clip.transform, ...newTransform }
+          transform: { ...clip.transform, ...newTransform },
+          keyframeData
         }
       }
     };

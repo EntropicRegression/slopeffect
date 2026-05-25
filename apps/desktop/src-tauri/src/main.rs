@@ -5,7 +5,7 @@ use uuid::Uuid;
 use slopeffect_core::{TransformState, Scene};
 use slopeffect_project::{
     CommandHistory, save_project, load_project, ProjectDocument,
-    UpdateTransformCommand, AddSceneCommand, EditorCommand
+    UpdateTransformCommand, AddSceneCommand
 };
 
 // ==========================================================================
@@ -217,6 +217,23 @@ fn pick_save_file_path() -> Result<Option<String>, String> {
 }
 
 #[tauri::command]
+fn pick_export_directory() -> Result<Option<String>, String> {
+    let script = "Add-Type -AssemblyName System.Windows.Forms; $f = New-Object System.Windows.Forms.FolderBrowserDialog; if ($f.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { $f.SelectedPath }";
+    let output = std::process::Command::new("powershell")
+        .args(&["-NoProfile", "-Command", script])
+        .output()
+        .map_err(|e| e.to_string())?;
+        
+    if output.status.success() {
+        let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if !path.is_empty() {
+            return Ok(Some(path));
+        }
+    }
+    Ok(None)
+}
+
+#[tauri::command]
 fn probe_media_file(path: String) -> Result<slopeffect_media::MediaMetadata, String> {
     slopeffect_media::probe_file(path).map_err(|e| e.to_string())
 }
@@ -244,7 +261,8 @@ fn main() {
             save_rich_project,
             load_rich_project,
             pick_open_file_path,
-            pick_save_file_path
+            pick_save_file_path,
+            pick_export_directory
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
