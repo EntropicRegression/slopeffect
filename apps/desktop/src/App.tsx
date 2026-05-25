@@ -49,6 +49,34 @@ const TICKS_PER_SECOND = 1000000000;
 const FPS = 30;
 const TICKS_PER_FRAME = TICKS_PER_SECOND / FPS;
 
+interface VideoPreviewElementProps {
+  src: string;
+  playheadTimeSeconds: number;
+}
+
+const VideoPreviewElement: React.FC<VideoPreviewElementProps> = ({ src, playheadTimeSeconds }) => {
+  const videoRef = useRef<HTMLVideoElement>(null);
+
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+
+    if (Math.abs(video.currentTime - playheadTimeSeconds) > 0.05) {
+      video.currentTime = playheadTimeSeconds;
+    }
+  }, [playheadTimeSeconds]);
+
+  return (
+    <video
+      ref={videoRef}
+      src={src}
+      style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+      muted
+      playsInline
+    />
+  );
+};
+
 export default function App() {
   const store = useEditorStore();
   
@@ -421,6 +449,7 @@ export default function App() {
           }
         }
       } else if (isDraggingClip && activeClip) {
+        // 1. 水平拖曳：更新選中 clip 的播放起點時間 ticks
         const trackContent = document.querySelector('.track-content');
         if (trackContent) {
           const rect = trackContent.getBoundingClientRect();
@@ -434,19 +463,37 @@ export default function App() {
             targetTicks = Math.round(targetTicks / snapInterval) * snapInterval;
           }
           
-          const oldStartTicks = store.clips[activeClip.id].startTicks;
-          const diffTicks = targetTicks - oldStartTicks;
+          store.clips[activeClip.id].startTicks = targetTicks;
+        }
+
+        // 2. 垂直拖曳：更換軌道 (trackId)
+        const tracksWrapper = document.getElementById('tracks-wrapper');
+        if (tracksWrapper) {
+          const tracksRect = tracksWrapper.getBoundingClientRect();
+          const relativeY = e.clientY - tracksRect.top;
           
-          if (diffTicks !== 0) {
-            // Move linked video & audio clips together
-            Object.values(store.clips).forEach(c => {
-              if (c.assetId === activeClip.assetId) {
-                c.startTicks = Math.max(0, c.startTicks + diffTicks);
-              }
-            });
-            useEditorStore.setState({ clips: { ...store.clips } });
+          const sortedTracks = Object.entries(store.tracks)
+            .sort(([, a], [, b]) => a.order - b.order);
+            
+          const trackIndex = Math.max(0, Math.min(sortedTracks.length - 1, Math.floor(relativeY / 60)));
+          const targetTrackId = sortedTracks[trackIndex][0];
+          const targetTrack = sortedTracks[trackIndex][1];
+          
+          const clipType = activeClip.type;
+          const isAudioTrack = targetTrack.type === 'audio';
+          const isAudioClip = clipType === 'audio';
+          
+          // 音訊片段只能去音訊軌，視訊/SVG只能去視訊軌
+          if (isAudioTrack === isAudioClip) {
+            store.clips[activeClip.id].trackId = targetTrackId;
           }
         }
+        
+        // 3. 標記變更為未存檔並更新狀態
+        useEditorStore.setState({ 
+          clips: { ...store.clips },
+          isSaved: false
+        });
       }
     };
 
@@ -673,14 +720,16 @@ export default function App() {
     const sizeStr = type === 'video' ? `${metadata.width}x${metadata.height}` : type === 'audio' ? `${metadata.sampleRate.toLocaleString()}Hz` : 'Vector';
 
     const assetId = `asset-${Math.random().toString(36).substring(2, 11)}`;
-    
+    const blobUrl = type === 'video' || type === 'audio' || type === 'image' ? URL.createObjectURL(file) : undefined;
+
     store.importAsset({
       id: assetId,
       name: file.name,
       type: type as any,
       size: sizeStr,
       duration: durationStr,
-      format: type.toUpperCase()
+      format: type.toUpperCase(),
+      blobUrl
     });
 
     const durationTicks = Math.round(metadata.durationSeconds * TICKS_PER_SECOND);
@@ -1349,6 +1398,49 @@ export default function App() {
                 <polygon points="50,15 90,85 10,85" fill="none" stroke="#6366F1" strokeWidth="6"/>
                 <circle cx="50" cy="55" r="18" fill="none" stroke="#A855F7" strokeWidth="4"/>
               </svg>
+            ) : clip.type === 'video' ? (
+              asset?.blobUrl ? (
+                <div style={{ width: '100%', height: '100%', mixBlendMode: clip.transform.blendMode as any }}>
+                  <VideoPreviewElement 
+                    src={asset.blobUrl} 
+                    playheadTimeSeconds={(store.currentTimeTicks - clip.startTicks) / TICKS_PER_SECOND} 
+                  />
+                </div>
+              ) : (
+                <div 
+                  className="shape-element" 
+                  style={{ 
+                    width: '100%', 
+                    height: '100%', 
+                    mixBlendMode: clip.transform.blendMode as any,
+                    display: 'flex',
+                    flexDirection: 'column',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    color: 'rgba(255, 255, 255, 0.7)',
+                    fontSize: '11px',
+                    gap: '6px',
+                    padding: '12px',
+                    textAlign: 'center',
+                    border: '1px dashed rgba(255,255,255,0.25)'
+                  }}
+                >
+                  <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2">
+                    <rect x="2" y="2" width="20" height="20" rx="2.18" ry="2.18"/>
+                    <line x1="7" y1="2" x2="7" y2="22"/>
+                    <line x1="17" y1="2" x2="17" y2="22"/>
+                    <line x1="2" y1="12" x2="22" y2="12"/>
+                    <line x1="2" y1="7" x2="7" y2="7"/>
+                    <line x1="2" y1="17" x2="7" y2="17"/>
+                    <line x1="17" y1="17" x2="22" y2="17"/>
+                    <line x1="17" y1="7" x2="22" y2="7"/>
+                  </svg>
+                  <span style={{ fontWeight: 500, maxWidth: '90%', textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap' }}>
+                    {clip.name}
+                  </span>
+                  <span style={{ fontSize: '9px', opacity: 0.5 }}>離線/待載入媒體預覽</span>
+                </div>
+              )
             ) : (
               <div className="shape-element" style={{ width: '100%', height: '100%', mixBlendMode: clip.transform.blendMode as any }}></div>
             )}

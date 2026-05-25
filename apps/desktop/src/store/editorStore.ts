@@ -182,10 +182,10 @@ export const useEditorStore = create<EditorState>((set) => ({
   scenes: {
     'scene-1': { id: 'scene-1', name: 'Scene 1', width: 1920, height: 1080 }
   },
-  currentTimeTicks: 4400000000,
+  currentTimeTicks: 0,
   isPlaying: false,
   activeTool: 'select',
-  selectedClipId: 'clip-logo',
+  selectedClipId: null,
   timelineZoom: 150,
   isSnapEnabled: true,
   previewVolume: 80,
@@ -274,81 +274,9 @@ export const useEditorStore = create<EditorState>((set) => ({
     });
   },
   
-  assets: [
-    { id: 'asset-sunset', name: 'nature_sunset.mp4', type: 'video', size: '1920x1080', duration: '15.0s', format: 'MP4' },
-    { id: 'asset-drone', name: 'atmospheric_drone.wav', type: 'audio', size: '48,000Hz', duration: '32.0s', format: 'WAV' },
-    { id: 'asset-logo', name: 'logo_vector.svg', type: 'svg', size: 'Vector', duration: 'Static', format: 'SVG' }
-  ],
+  assets: [],
   
-  clips: {
-    'clip-sunset': {
-      id: 'clip-sunset',
-      name: 'nature_sunset.mp4',
-      type: 'video',
-      startTicks: 0,
-      durationTicks: 10000000000,
-      assetId: 'asset-sunset',
-      trackId: 'v1',
-      transform: { posX: 960, posY: 540, anchorX: 0.5, anchorY: 0.5, scaleX: 100, scaleY: 100, rotation: 0, opacity: 100, blendMode: 'normal' },
-      keyframes: { position: false, scale: false, rotation: false, opacity: false },
-      keyframeData: [],
-      effects: [],
-      parentClipId: null,
-      enabled: true
-    },
-    'clip-sunset-audio': {
-      id: 'clip-sunset-audio',
-      name: 'nature_sunset.mp4 (音訊)',
-      type: 'audio',
-      startTicks: 0,
-      durationTicks: 10000000000,
-      assetId: 'asset-sunset',
-      trackId: 'a1',
-      transform: { posX: 0, posY: 0, anchorX: 0.5, anchorY: 0.5, scaleX: 100, scaleY: 100, rotation: 0, opacity: 100, blendMode: 'normal' },
-      keyframes: { position: false, scale: false, rotation: false, opacity: false },
-      keyframeData: [],
-      effects: [],
-      parentClipId: null,
-      enabled: true
-    },
-    'clip-logo': {
-      id: 'clip-logo',
-      name: 'logo_vector.svg',
-      type: 'svg',
-      startTicks: 3000000000,
-      durationTicks: 5000000000,
-      assetId: 'asset-logo',
-      trackId: 'v2',
-      transform: { posX: 960, posY: 540, anchorX: 0.5, anchorY: 0.5, scaleX: 75, scaleY: 75, rotation: 45, opacity: 85, blendMode: 'normal' },
-      keyframes: { position: true, scale: true, rotation: true, opacity: false },
-      keyframeData: [
-        { id: 'kf-logo-pos-1', timeTicks: 3000000000, property: 'posX', value: 400, easing: 'easeInOut' },
-        { id: 'kf-logo-pos-2', timeTicks: 6000000000, property: 'posX', value: 1520, easing: 'easeInOut' },
-        { id: 'kf-logo-rot-1', timeTicks: 3000000000, property: 'rotation', value: 0, easing: 'easeInOut' },
-        { id: 'kf-logo-rot-2', timeTicks: 8000000000, property: 'rotation', value: 360, easing: 'linear' },
-        { id: 'kf-logo-scale-1', timeTicks: 3000000000, property: 'scaleX', value: 50, easing: 'easeOut' },
-        { id: 'kf-logo-scale-2', timeTicks: 5500000000, property: 'scaleX', value: 120, easing: 'easeIn' }
-      ],
-      effects: [],
-      parentClipId: null,
-      enabled: true
-    },
-    'clip-drone': {
-      id: 'clip-drone',
-      name: 'atmospheric_drone.wav',
-      type: 'audio',
-      startTicks: 0,
-      durationTicks: 15000000000,
-      assetId: 'asset-drone',
-      trackId: 'a1',
-      transform: { posX: 0, posY: 0, anchorX: 0.5, anchorY: 0.5, scaleX: 100, scaleY: 100, rotation: 0, opacity: 100, blendMode: 'normal' },
-      keyframes: { position: false, scale: false, rotation: false, opacity: false },
-      keyframeData: [],
-      effects: [],
-      parentClipId: null,
-      enabled: true
-    }
-  },
+  clips: {},
   
   tracks: {
     v2: { type: 'video', name: 'V2 向量圖層', order: 0, muted: false, locked: false },

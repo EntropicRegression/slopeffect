@@ -73,4 +73,5 @@ export interface Asset {
   size: string;
   duration: string;
   format: string;
+  blobUrl?: string;
 }
