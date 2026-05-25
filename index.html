@@ -1,0 +1,665 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Slopeffect Pro - 影片編輯軟體工作空間</title>
+  <!-- Google Fonts Inter -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <!-- Lucide Icons for premium visual feel -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body class="slopeffect-dark">
+
+  <!-- App Shell -->
+  <div class="app-shell">
+    
+    <!-- Top Bar / App Menu & Toolbar -->
+    <header class="app-header">
+      <div class="header-left">
+        <div class="logo">
+          <div class="logo-icon"></div>
+          <span>Slopeffect <span class="logo-badge">PRO</span></span>
+        </div>
+        <nav class="app-menu">
+          <ul>
+            <li class="menu-item active">檔案 (F)
+              <ul class="dropdown">
+                <li onclick="simulateCommand('project.create')">新增專案 (.slopeproj)</li>
+                <li onclick="simulateCommand('project.open')">開啟專案...</li>
+                <li class="divider"></li>
+                <li onclick="simulateCommand('project.save')">儲存專案</li>
+                <li onclick="simulateCommand('project.save_as')">另存新檔...</li>
+              </ul>
+            </li>
+            <li class="menu-item">編輯 (E)
+              <ul class="dropdown">
+                <li id="menu-undo" class="disabled" onclick="triggerUndo()">復原 (Undo) <span class="shortcut">Ctrl+Z</span></li>
+                <li id="menu-redo" class="disabled" onclick="triggerRedo()">重做 (Redo) <span class="shortcut">Ctrl+Y</span></li>
+                <li class="divider"></li>
+                <li onclick="simulateCommand('clip.split')">切割片段 <span class="shortcut">S</span></li>
+                <li onclick="simulateCommand('clip.delete')">刪除選取 <span class="shortcut">Del</span></li>
+              </ul>
+            </li>
+            <li class="menu-item">圖層 (L)
+              <ul class="dropdown">
+                <li onclick="simulateCommand('layer.add_shape')">新增圖形圖層</li>
+                <li onclick="simulateCommand('layer.add_svg')">新增向量 SVG</li>
+                <li onclick="simulateCommand('layer.add_image')">新增影像圖層</li>
+              </ul>
+            </li>
+            <li class="menu-item">序列 (S)</li>
+            <li class="menu-item">檢視 (V)</li>
+            <li class="menu-item highlight" onclick="openExportModal()">匯出 (X)</li>
+          </ul>
+        </nav>
+      </div>
+      
+      <!-- Center Toolbar -->
+      <div class="app-toolbar">
+        <button class="tool-btn active" id="tool-select" title="選取工具 (V)" onclick="selectTool('select')">
+          <i data-lucide="mouse-pointer"></i>
+        </button>
+        <button class="tool-btn" id="tool-razor" title="剃刀切割工具 (C / S)" onclick="selectTool('razor')">
+          <i data-lucide="scissors"></i>
+        </button>
+        <button class="tool-btn" id="tool-trim" title="修剪延伸工具 (T)" onclick="selectTool('trim')">
+          <i data-lucide="fold-horizontal"></i>
+        </button>
+        <button class="tool-btn" id="tool-hand" title="抓手平移工具 (H)" onclick="selectTool('hand')">
+          <i data-lucide="hand"></i>
+        </button>
+        <button class="tool-btn" id="tool-shape" title="矩形圖形工具 (R)" onclick="addShapeLayer()">
+          <i data-lucide="square"></i>
+        </button>
+      </div>
+
+      <div class="header-right">
+        <div class="undo-redo-indicators">
+          <button class="header-action-btn" id="btn-undo" onclick="triggerUndo()" title="復原 (Ctrl+Z)" disabled>
+            <i data-lucide="undo-2"></i>
+          </button>
+          <button class="header-action-btn" id="btn-redo" onclick="triggerRedo()" title="重做 (Ctrl+Y)" disabled>
+            <i data-lucide="redo-2"></i>
+          </button>
+        </div>
+        <!-- Scene Switcher Selector -->
+        <div class="scene-switcher-container">
+          <select id="active-scene-select" class="scene-select-header" onchange="switchScene(this.value)">
+            <!-- Scenes will be rendered dynamically -->
+          </select>
+          <button class="add-scene-btn" onclick="openAddSceneModal()" title="新增場景 (SCENE)">
+            <i data-lucide="plus-circle"></i>
+          </button>
+        </div>
+        <div class="project-info">
+          <span class="project-name">Untitled.slopeproj</span>
+          <span class="project-status" id="project-status-text">已儲存</span>
+        </div>
+        <button class="export-btn-header" onclick="openExportModal()">
+          <i data-lucide="upload-cloud"></i> 渲染匯出
+        </button>
+      </div>
+    </header>
+
+    <!-- Main Content Panels -->
+    <main class="app-workspace">
+      
+      <!-- Left Panel: Asset Panel (Media Library) -->
+      <section class="panel asset-panel" id="panel-assets">
+        <div class="panel-header">
+          <h3><i data-lucide="folder-open"></i> 素材庫 (Media Library)</h3>
+          <button class="icon-btn-accent" onclick="triggerImport()" title="匯入媒體檔案"><i data-lucide="plus"></i> 匯入</button>
+        </div>
+        <div class="panel-body">
+          <div class="assets-grid" id="assets-list">
+            <!-- Asset Items will be rendered here dynamically -->
+          </div>
+        </div>
+      </section>
+
+      <!-- Center Panel: Preview Panel & Canvas -->
+      <section class="panel preview-panel" id="panel-preview">
+        <div class="panel-header">
+          <h3><i data-lucide="monitor"></i> 預覽螢幕 (Preview Monitor)</h3>
+          <span class="zoom-indicator">1080p | 50%</span>
+        </div>
+        <div class="panel-body canvas-container">
+          
+          <!-- Interactive Preview Screen -->
+          <div class="preview-screen" id="video-screen">
+            <!-- Video/Image Background simulation -->
+            <div class="video-bg-layer" id="preview-video-bg"></div>
+            
+            <!-- Draggable Transform Overlay box -->
+            <div class="transform-overlay" id="transform-box">
+              <div class="transform-border"></div>
+              <!-- Transform Handles -->
+              <div class="handle handle-tl" data-handle="tl"></div>
+              <div class="handle handle-tr" data-handle="tr"></div>
+              <div class="handle handle-bl" data-handle="bl"></div>
+              <div class="handle handle-br" data-handle="br"></div>
+              <div class="handle handle-rotate" data-handle="rotate">
+                <div class="rotate-connector"></div>
+              </div>
+              <div class="transform-content" id="selected-overlay-content">
+                <!-- SVG / Shape placeholder -->
+                <svg viewBox="0 0 100 100" width="100%" height="100%" id="svg-layer-rendered" style="display: none;">
+                  <polygon points="50,15 90,85 10,85" fill="none" stroke="#6366F1" stroke-width="6"/>
+                  <circle cx="50" cy="55" r="18" fill="none" stroke="#A855F7" stroke-width="4"/>
+                </svg>
+                <div id="shape-layer-rendered" class="shape-element" style="display: none;"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Right Panel: Inspector Panel -->
+      <section class="panel inspector-panel" id="panel-inspector">
+        <div class="panel-header">
+          <h3><i data-lucide="sliders"></i> 屬性面板 (Inspector)</h3>
+        </div>
+        <div class="panel-body" id="inspector-content">
+          <div class="no-selection-placeholder" id="inspector-placeholder" style="display: none;">
+            <i data-lucide="info"></i>
+            <p>在時間軸或素材庫上點擊選擇剪輯圖層，以檢視屬性</p>
+          </div>
+          <div class="inspector-form" id="inspector-controls">
+            
+            <!-- Group: Layer Information -->
+            <div class="inspector-group">
+              <div class="group-title">圖層資訊 (Layer Info)</div>
+              <div class="form-row">
+                <label>名稱</label>
+                <input type="text" id="layer-name-input" value="nature_sunset.mp4" oninput="updateLayerName(this.value)">
+              </div>
+              <div class="form-row">
+                <label>啟用</label>
+                <div class="toggle-switch">
+                  <input type="checkbox" id="layer-enabled-checkbox" checked onchange="toggleLayerEnabled(this.checked)">
+                  <span class="slider"></span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Group: Transforms -->
+            <div class="inspector-group">
+              <div class="group-title">
+                空間變形 (Transform)
+                <button class="group-reset-btn" onclick="resetTransform()"><i data-lucide="rotate-ccw"></i></button>
+              </div>
+              
+              <!-- Position -->
+              <div class="property-header">
+                <span class="prop-title">位置 (Position)</span>
+                <button class="keyframe-btn" id="kf-btn-pos" onclick="toggleKeyframe('position')" title="加入關鍵影格">
+                  <i data-lucide="diamond"></i>
+                </button>
+              </div>
+              <div class="form-row-multi">
+                <div class="num-input-group">
+                  <span>X</span>
+                  <input type="number" id="pos-x-input" value="960" oninput="handleInspectorNumInput('posX', this.value)">
+                </div>
+                <div class="num-input-group">
+                  <span>Y</span>
+                  <input type="number" id="pos-y-input" value="540" oninput="handleInspectorNumInput('posY', this.value)">
+                </div>
+              </div>
+
+              <!-- Scale -->
+              <div class="property-header">
+                <span class="prop-title">等比縮放 (Scale)</span>
+                <button class="keyframe-btn" id="kf-btn-scale" onclick="toggleKeyframe('scale')" title="加入關鍵影格">
+                  <i data-lucide="diamond"></i>
+                </button>
+              </div>
+              <div class="form-row-multi">
+                <div class="num-input-group">
+                  <input type="number" id="scale-input" value="100" oninput="handleInspectorNumInput('scale', this.value)">
+                  <span style="padding-right: 12px;">%</span>
+                </div>
+              </div>
+
+              <!-- Rotation -->
+              <div class="property-header">
+                <span class="prop-title">旋轉角度 (Rotation)</span>
+                <button class="keyframe-btn animate-active" id="kf-btn-rot" onclick="toggleKeyframe('rotation')" title="加入關鍵影格">
+                  <i data-lucide="diamond"></i>
+                </button>
+              </div>
+              <div class="form-row-multi">
+                <div class="num-input-group">
+                  <input type="number" id="rot-input" value="45" oninput="handleInspectorNumInput('rotation', this.value)">
+                  <span style="padding-right: 12px;">°</span>
+                </div>
+              </div>
+
+              <!-- Opacity -->
+              <div class="property-header">
+                <span class="prop-title">不透明度 (Opacity)</span>
+                <button class="keyframe-btn" id="kf-btn-opacity" onclick="toggleKeyframe('opacity')" title="加入關鍵影格">
+                  <i data-lucide="diamond"></i>
+                </button>
+              </div>
+              <div class="form-row-multi">
+                <div class="num-input-group">
+                  <input type="number" id="opacity-input" value="85" oninput="handleInspectorNumInput('opacity', this.value)">
+                  <span style="padding-right: 12px;">%</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Group: Blend Modes -->
+            <div class="inspector-group">
+              <div class="group-title">混合與合成 (Composition)</div>
+              <div class="form-row">
+                <label>混合模式</label>
+                <select id="blend-mode-select" onchange="updateBlendMode(this.value)">
+                  <option value="normal">Normal (正常)</option>
+                  <option value="screen">Screen (濾色)</option>
+                  <option value="multiply">Multiply (色彩增值)</option>
+                  <option value="overlay">Overlay (覆蓋)</option>
+                  <option value="lighten">Lighten (變亮)</option>
+                </select>
+              </div>
+            </div>
+            
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <!-- Bottom Panel: Timeline Panel -->
+    <footer class="panel timeline-panel" id="panel-timeline">
+      <div class="timeline-header">
+        <div class="timeline-tools">
+          <button class="icon-btn" onclick="simulateSplit()" title="在播放頭切割選取的片段 (S)"><i data-lucide="scissors"></i> 切割</button>
+          <button class="icon-btn" onclick="simulateDelete()" title="刪除選取的片段 (Del)"><i data-lucide="trash-2"></i> 刪除</button>
+          <div class="timeline-divider"></div>
+          <button class="icon-btn" id="timeline-snap-btn" onclick="toggleSnap()" class="active" title="吸附對齊網格 (N)"><i data-lucide="magnet"></i> 網格吸附: <span>開</span></button>
+        </div>
+
+        <div class="timeline-zoom">
+          <i data-lucide="zoom-out" onclick="zoomTimeline(-10)"></i>
+          <input type="range" min="50" max="250" value="150" class="zoom-slider" id="timeline-zoom-slider" oninput="handleTimelineZoom(this.value)">
+          <i data-lucide="zoom-in" onclick="zoomTimeline(10)"></i>
+        </div>
+      </div>
+      
+      <div class="timeline-body" id="timeline-body-scroll">
+        <!-- Ruler Area -->
+        <div class="timeline-ruler" id="timeline-ruler-el">
+          
+          <!-- Integrated Playback Controls directly above tracks list (layer column) -->
+          <div class="timeline-media-controls">
+            <div class="timecode-display-compact">
+              <span id="timecode-str">00:00:04;12</span>
+              <span id="timeline-timecode-str" style="display: none;">00:00:04;12</span>
+              <span class="ticks-label-compact" id="ticks-str">4,400,000,000 ticks</span>
+            </div>
+            
+            <div class="media-controls-compact">
+              <button class="control-btn-icon-compact" onclick="skipToStart()" title="跳至起點"><i data-lucide="chevrons-left"></i></button>
+              <button class="control-btn-icon-compact" onclick="stepBack()" title="上一格 (←)"><i data-lucide="chevron-left"></i></button>
+              <button class="control-btn-icon-compact play-pause-btn-compact" id="play-btn" onclick="togglePlay()" title="播放/暫停 (Space)"><i data-lucide="play"></i></button>
+              <button class="control-btn-icon-compact" onclick="stepForward()" title="下一格 (→)"><i data-lucide="chevron-right"></i></button>
+              <button class="control-btn-icon-compact" onclick="skipToEnd()" title="跳至終點"><i data-lucide="chevrons-right"></i></button>
+            </div>
+            
+            <div class="volume-slider-container-compact">
+              <i data-lucide="volume-2" id="volume-icon"></i>
+              <input type="range" class="volume-slider-compact" id="preview-volume" min="0" max="100" value="80" oninput="changeVolume(this.value)" title="預覽音量">
+            </div>
+          </div>
+
+          <div class="ruler-ticks" id="ruler-ticks-container">
+            <!-- Ticks will be dynamically drawn -->
+          </div>
+          <!-- Draggable Playhead line -->
+          <div class="playhead" id="timeline-playhead">
+            <div class="playhead-handle"></div>
+          </div>
+        </div>
+
+        <!-- Tracks Container -->
+        <div class="tracks-container" id="tracks-wrapper">
+          
+          <!-- Track 1: Video Track 2 (Overlay) -->
+          <div class="track-row" data-track-type="video" data-track-id="v2">
+            <div class="track-header">
+              <div class="track-title">V2 向量圖層</div>
+              <div class="track-actions">
+                <button onclick="toggleTrackMute('v2')" title="隱藏軌道" id="mute-v2"><i data-lucide="eye"></i></button>
+                <button onclick="toggleTrackLock('v2')" title="鎖定軌道" id="lock-v2"><i data-lucide="unlock"></i></button>
+              </div>
+            </div>
+            <div class="track-content" id="track-v2-clips">
+              <!-- Clip block 1 -->
+              <div class="clip-block video-clip purple-gradient" id="clip-logo" style="left: 180px; width: 300px;" onclick="selectClip('clip-logo', event)" data-start-ticks="3000000000" data-duration-ticks="5000000000" data-asset="logo_vector.svg">
+                <i data-lucide="file-type-2"></i>
+                <span class="clip-name">logo_vector.svg</span>
+                <span class="clip-duration">5.0s</span>
+                <div class="clip-resize-handle handle-l"></div>
+                <div class="clip-resize-handle handle-r"></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Track 2: Video Track 1 (Base Video) -->
+          <div class="track-row" data-track-type="video" data-track-id="v1">
+            <div class="track-header">
+              <div class="track-title">V1 影片音軌</div>
+              <div class="track-actions">
+                <button onclick="toggleTrackMute('v1')" title="隱藏軌道" id="mute-v1"><i data-lucide="eye"></i></button>
+                <button onclick="toggleTrackLock('v1')" title="鎖定軌道" id="lock-v1"><i data-lucide="unlock"></i></button>
+              </div>
+            </div>
+            <div class="track-content" id="track-v1-clips">
+              <!-- Clip block 2 -->
+              <div class="clip-block video-clip base-clip blue-gradient" id="clip-sunset" style="left: 0px; width: 600px;" onclick="selectClip('clip-sunset', event)" data-start-ticks="0" data-duration-ticks="10000000000" data-asset="nature_sunset.mp4">
+                <i data-lucide="video"></i>
+                <span class="clip-name">nature_sunset.mp4</span>
+                <span class="clip-duration">10.0s</span>
+                <div class="clip-resize-handle handle-l"></div>
+                <div class="clip-resize-handle handle-r"></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Track 3: Audio Track 1 (Ambient Music) -->
+          <div class="track-row" data-track-type="audio" data-track-id="a1">
+            <div class="track-header">
+              <div class="track-title">A1 背景音樂</div>
+              <div class="track-actions text-btns">
+                <button onclick="toggleAudioMute('a1')" title="靜音" class="badge-btn" id="mute-a1">M</button>
+                <button onclick="toggleAudioSolo('a1')" title="獨奏" class="badge-btn" id="solo-a1">S</button>
+                <button onclick="toggleTrackLock('a1')" title="鎖定軌道" id="lock-a1"><i data-lucide="unlock"></i></button>
+              </div>
+            </div>
+            <div class="track-content audio-track-bg" id="track-a1-clips">
+              <!-- Clip block 3 -->
+              <div class="clip-block audio-clip green-gradient" id="clip-drone" style="left: 0px; width: 900px;" onclick="selectClip('clip-drone', event)" data-start-ticks="0" data-duration-ticks="15000000000" data-asset="atmospheric_drone.wav">
+                <i data-lucide="music"></i>
+                <span class="clip-name">atmospheric_drone.wav</span>
+                <span class="clip-duration">15.0s</span>
+                <!-- Simulated Waveform visual -->
+                <div class="waveform-svg-overlay">
+                  <svg viewBox="0 0 100 20" preserveAspectRatio="none" width="100%" height="100%">
+                    <path d="M 0 10 Q 5 2, 10 10 Q 15 18, 20 10 Q 25 1, 30 10 Q 35 19, 40 10 Q 45 4, 50 10 Q 55 16, 60 10 Q 65 3, 70 10 Q 75 17, 80 10 Q 85 2, 90 10 Q 95 18, 100 10" fill="none" stroke="rgba(255,255,255,0.25)" stroke-width="1.5"></path>
+                  </svg>
+                </div>
+                <div class="clip-resize-handle handle-l"></div>
+                <div class="clip-resize-handle handle-r"></div>
+              </div>
+            </div>
+          </div>
+          
+        </div>
+      </div>
+    </footer>
+  </div>
+
+  <!-- Simulated OS Import File Dialog -->
+  <div class="file-dialog-overlay" id="import-dialog" style="display: none;">
+    <div class="file-dialog-box">
+      <div class="dialog-header">
+        <h4>匯入多媒體素材檔案</h4>
+        <button class="dialog-close" onclick="closeImport()"><i data-lucide="x"></i></button>
+      </div>
+      <div class="dialog-body">
+        <p class="dialog-subtitle">請選擇要載入至專案資產庫的本機影片、音軌或向量圖片：</p>
+        <div class="import-options-grid">
+          
+          <div class="import-option-card" onclick="importPredefined('clip-ocean', 'cinematic_ocean.mp4', 'video', '1920x1080', '12.4s', 'ocean_thumb')">
+            <div class="mock-thumb ocean-thumb"></div>
+            <div class="option-info">
+              <span class="name">cinematic_ocean.mp4</span>
+              <span class="meta">影片 | 1920x1080 | 12.4s</span>
+            </div>
+          </div>
+
+          <div class="import-option-card" onclick="importPredefined('clip-voice', 'narration_voiceover.wav', 'audio', '44,100Hz', '8.5s', 'audio_thumb')">
+            <div class="mock-thumb audio-thumb"><i data-lucide="mic"></i></div>
+            <div class="option-info">
+              <span class="name">narration_voiceover.wav</span>
+              <span class="meta">音訊 | 44.1kHz | 8.5s</span>
+            </div>
+          </div>
+
+          <div class="import-option-card" onclick="importPredefined('clip-triangle', 'abstract_triangle.svg', 'svg', 'Vector', 'Static', 'vector_thumb')">
+            <div class="mock-thumb vector-thumb"><i data-lucide="triangle"></i></div>
+            <div class="option-info">
+              <span class="name">abstract_triangle.svg</span>
+              <span class="meta">圖像 | 向量 | 靜態 SVG</span>
+            </div>
+          </div>
+
+          <div class="import-option-card" onclick="importPredefined('clip-logo-png', 'company_logo.png', 'image', '800x800', 'Static', 'image_thumb')">
+            <div class="mock-thumb image-thumb"><i data-lucide="image"></i></div>
+            <div class="option-info">
+              <span class="name">company_logo.png</span>
+              <span class="meta">圖像 | PNG 靜態圖 | 800x800</span>
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Premium Glassmorphic Export & Render Settings Modal -->
+  <div class="export-modal-overlay" id="export-modal" style="display: none;">
+    <div class="export-modal-box">
+      
+      <!-- Modal Header -->
+      <div class="export-header">
+        <div class="export-title-wrapper">
+          <i data-lucide="upload-cloud" class="indigo-glow-icon"></i>
+          <h4>匯出多媒體影片 (Export Media)</h4>
+        </div>
+        <button class="dialog-close" onclick="closeExportModal()"><i data-lucide="x"></i></button>
+      </div>
+
+      <!-- Modal Body -->
+      <div class="export-body">
+        
+        <!-- Left Side: Technical Settings Form -->
+        <div class="export-left-settings">
+          
+          <div class="settings-section">
+            <h5>基本檔案設定</h5>
+            <div class="form-grid">
+              <div class="grid-item full-width">
+                <label>檔案名稱</label>
+                <input type="text" id="export-filename" class="dark-input" value="my_awesome_edit_v1">
+              </div>
+              <div class="grid-item full-width">
+                <label>輸出路徑</label>
+                <div class="input-browse-group">
+                  <input type="text" id="export-path" class="dark-input" value="C:/Projects/Slopeffect/Exports/" readonly>
+                  <button class="browse-btn" onclick="simulateBrowse()"><i data-lucide="folder"></i> 瀏覽</button>
+                </div>
+              </div>
+              <div class="grid-item full-width">
+                <label>輸出預設檔 (Preset)</label>
+                <select class="dark-select" id="export-preset">
+                  <option>YouTube Full HD 1080p (Fast H.264)</option>
+                  <option>Apple ProRes 422 HQ (Professional Copy)</option>
+                  <option>Social Media Instagram Square 1:1</option>
+                  <option>Audio Only (AAC 320kbps High Quality)</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+          <div class="settings-section">
+            <h5>影片編碼設定</h5>
+            <div class="form-grid-two">
+              <div class="grid-item">
+                <label>格式 (Format)</label>
+                <select class="dark-select"><option>MP4 (.mp4)</option><option>QuickTime (.mov)</option><option>SVG Image Sequence</option></select>
+              </div>
+              <div class="grid-item">
+                <label>視訊編碼器 (Codec)</label>
+                <select class="dark-select"><option>H.264 (AVC)</option><option>HEVC (H.265)</option><option>ProRes 422</option></select>
+              </div>
+              <div class="grid-item">
+                <label>解析度 (Resolution)</label>
+                <div class="resolution-lock-group">
+                  <input type="number" class="dark-input inline-num" value="1920">
+                  <i data-lucide="link" class="lock-icon active"></i>
+                  <input type="number" class="dark-input inline-num" value="1080">
+                </div>
+              </div>
+              <div class="grid-item">
+                <label>畫面播放格率</label>
+                <select class="dark-select"><option>30.00 fps</option><option>60.00 fps</option><option>24.00 fps</option></select>
+              </div>
+              <div class="grid-item full-width">
+                <label>目標位元率 (Target Bitrate)</label>
+                <div class="slider-val-combo">
+                  <input type="range" min="2" max="30" value="12" class="prop-slider" id="bitrate-slider" oninput="document.getElementById('bitrate-val').innerText = this.value">
+                  <span class="inline-val"><span id="bitrate-val">12</span> Mbps</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="settings-section">
+            <h5>音訊編碼設定</h5>
+            <div class="form-grid-two">
+              <div class="grid-item">
+                <label>音訊編碼器</label>
+                <select class="dark-select"><option>AAC</option><option>PCM Linear</option></select>
+              </div>
+              <div class="grid-item">
+                <label>取樣率 (Sample Rate)</label>
+                <select class="dark-select"><option>48,000 Hz</option><option>44,100 Hz</option></select>
+              </div>
+              <div class="grid-item">
+                <label>聲道 (Channels)</label>
+                <select class="dark-select"><option>Stereo (立體聲)</option><option>Mono (單聲道)</option></select>
+              </div>
+              <div class="grid-item">
+                <label>音訊位元率</label>
+                <select class="dark-select"><option>320 kbps</option><option>256 kbps</option><option>192 kbps</option></select>
+              </div>
+            </div>
+          </div>
+
+        </div>
+
+        <!-- Right Side: Preview & Progress -->
+        <div class="export-right-progress">
+          
+          <div class="render-preview-card">
+            <div class="render-thumb-wrapper">
+              <div class="render-thumbnail"></div>
+              <!-- Glowing circle progress spinner overlay -->
+              <div class="render-spinner-container" id="export-spinner" style="display: none;">
+                <svg class="progress-ring" width="120" height="120">
+                  <circle class="progress-ring-circle-bg" stroke="rgba(255,255,255,0.06)" stroke-width="6" fill="transparent" r="52" cx="60" cy="60"/>
+                  <circle class="progress-ring-circle" id="export-progress-ring" stroke="url(#indigo-grad)" stroke-width="6" stroke-dasharray="326.7" stroke-dashoffset="326.7" fill="transparent" r="52" cx="60" cy="60"/>
+                  <defs>
+                    <linearGradient id="indigo-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+                      <stop offset="0%" stop-color="#6366F1" />
+                      <stop offset="100%" stop-color="#A855F7" />
+                    </linearGradient>
+                  </defs>
+                </svg>
+                <div class="progress-center-text" id="export-progress-text">0%</div>
+              </div>
+              <div class="render-preview-watermark" id="preview-wm">RENDER PREVIEW</div>
+            </div>
+            
+            <div class="progress-panel-details">
+              <div class="progress-bar-container">
+                <div class="progress-bar-fill" id="export-progress-fill" style="width: 0%;"></div>
+              </div>
+              
+              <div class="render-stats">
+                <div class="stat-row">
+                  <span class="label">渲染進度:</span>
+                  <span class="value accent" id="render-val-percent">準備中</span>
+                </div>
+                <div class="stat-row">
+                  <span class="label">經過時間:</span>
+                  <span class="value" id="render-val-elapsed">00:00:00</span>
+                </div>
+                <div class="stat-row">
+                  <span class="label">剩餘時間:</span>
+                  <span class="value" id="render-val-remaining">--:--:--</span>
+                </div>
+                <div class="stat-row">
+                  <span class="label">目前渲染階層:</span>
+                  <span class="value" id="render-val-phase">無啟用任務</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+        </div>
+
+      </div>
+
+      <!-- Modal Footer -->
+      <div class="export-footer">
+        <button class="footer-btn ghost-btn" onclick="closeExportModal()">取消關閉</button>
+        <button class="footer-btn secondary-btn" id="export-bg-btn" onclick="startBackgroundRender()" disabled>背景渲染</button>
+        <button class="footer-btn primary-gradient-btn" id="export-start-btn" onclick="startRender()">開始渲染</button>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- Simulated Add Scene Modal Overlay -->
+  <div class="file-dialog-overlay" id="add-scene-dialog" style="display: none;">
+    <div class="file-dialog-box" style="width: 400px;">
+      <div class="dialog-header">
+        <h4>新增場景 (Create Scene)</h4>
+        <button class="dialog-close" onclick="closeAddSceneModal()"><i data-lucide="x"></i></button>
+      </div>
+      <div class="dialog-body">
+        <div class="form-grid" style="display: flex; flex-direction: column; gap: 12px;">
+          <div class="grid-item">
+            <label>場景名稱</label>
+            <input type="text" id="new-scene-name" class="dark-input" value="Scene 2">
+          </div>
+          <div class="grid-item">
+            <label>場景解析度 (Scene Dimension)</label>
+            <div class="resolution-lock-group">
+              <input type="number" id="new-scene-width" class="dark-input inline-num" value="1920">
+              <i data-lucide="link" class="lock-icon active"></i>
+              <input type="number" id="new-scene-height" class="dark-input inline-num" value="1080">
+            </div>
+          </div>
+        </div>
+        <div class="dialog-footer" style="margin-top: 20px; display: flex; justify-content: flex-end; gap: 8px;">
+          <button class="footer-btn ghost-btn" style="padding: 6px 12px; font-size: 11px;" onclick="closeAddSceneModal()">取消</button>
+          <button class="footer-btn primary-gradient-btn" style="padding: 6px 16px; font-size: 11px;" onclick="createNewScene()">建立場景</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Notification Bar for simulated commands -->
+  <div class="notification-toast" id="toast-message" style="display: none;">
+    <i data-lucide="info"></i>
+    <span class="message">專案已成功儲存</span>
+  </div>
+
+  <!-- Background rendering status badge -->
+  <div class="bg-render-status-badge" id="bg-badge" style="display: none;" onclick="openExportModal()">
+    <i class="spinner-icon" data-lucide="loader-2"></i>
+    <span>背景渲染中: <strong id="bg-badge-percent">0%</strong></span>
+  </div>
+
+  <!-- Application Logic -->
+  <script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,12 @@
+{
+  "identifier": "desktop-cap",
+  "description": "Granular window permissions for the Slopeffect desktop editor",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "core:app:allow-version",
+    "core:window:allow-close",
+    "core:window:allow-minimize",
+    "core:window:allow-maximize"
+  ]
+}

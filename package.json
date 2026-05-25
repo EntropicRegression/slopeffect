@@ -1,0 +1,15 @@
+{
+  "name": "slopeffect-ui-mockup",
+  "version": "0.1.0",
+  "description": "Interactive UI Workspace for the Slopeffect Desktop Video Editor",
+  "main": "index.html",
+  "scripts": {
+    "dev": "vite",
+    "serve": "http-server -p 8080"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "vite": "^5.0.0",
+    "http-server": "^14.1.1"
+  }
+}

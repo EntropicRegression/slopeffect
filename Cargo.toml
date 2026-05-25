@@ -1,0 +1,15 @@
+[workspace]
+members = [
+    "crates/slopeffect-core",
+    "crates/slopeffect-project",
+    "crates/slopeffect-media",
+    "apps/desktop/src-tauri"
+]
+resolver = "2"
+
+[workspace.dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+uuid = { version = "1.0", features = ["v4", "serde"] }
+thiserror = "1.0"
+anyhow = "1.0"
