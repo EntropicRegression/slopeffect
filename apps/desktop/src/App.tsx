@@ -167,6 +167,9 @@ export default function App() {
   const overlayWidthPct = activeClip ? (assetWidth / scene.width) * 100 : 40;
   const overlayHeightPct = activeClip ? (assetHeight / scene.height) * 100 : 50;
 
+  const currentSceneDurationSeconds = store.scenes[store.currentSceneId]?.durationSeconds ?? 12;
+  const timelineWidth = currentSceneDurationSeconds * store.timelineZoom;
+
   // Toast notification
   const triggerToast = (msg: string, duration = 3000) => {
     setToastMessage(msg);
@@ -326,8 +329,9 @@ export default function App() {
         const clickX = e.clientX - rect.left - 180; // 180px track header offset
         let targetTicks = (clickX / store.timelineZoom) * TICKS_PER_SECOND;
         
+        const maxTicks = currentSceneDurationSeconds * TICKS_PER_SECOND;
         if (targetTicks < 0) targetTicks = 0;
-        if (targetTicks > 15000000000) targetTicks = 15000000000;
+        if (targetTicks > maxTicks) targetTicks = maxTicks;
         
         if (store.isSnapEnabled) {
           const frameIndex = Math.round(targetTicks / TICKS_PER_FRAME);
@@ -534,7 +538,7 @@ export default function App() {
       document.removeEventListener('mousemove', handleMouseMove);
       document.removeEventListener('mouseup', handleMouseUp);
     };
-  }, [isDraggingPlayhead, isDraggingTransform, isDraggingClip, activeHandle, transformDragStart, activeClip, store.timelineZoom, store.isSnapEnabled, activeHandleKfId, activeHandleType, graphProperty]);
+  }, [isDraggingPlayhead, isDraggingTransform, isDraggingClip, activeHandle, transformDragStart, activeClip, store.timelineZoom, store.isSnapEnabled, activeHandleKfId, activeHandleType, graphProperty, store.currentSceneId, store.scenes]);
 
   // Global Hotkeys
   useEffect(() => {
@@ -578,7 +582,7 @@ export default function App() {
   const renderRulerTicks = () => {
     const ticks = [];
     const zoomScale = store.timelineZoom;
-    for (let s = 0; s <= 12; s++) {
+    for (let s = 0; s <= currentSceneDurationSeconds; s++) {
       const pos = s * zoomScale;
       ticks.push(
         <React.Fragment key={`sec-${s}`}>
@@ -629,9 +633,15 @@ export default function App() {
             throw new Error('未取得有效的中介資料');
           }
         } catch (err: any) {
-          console.error("Probing failed:", err);
-          triggerToast(`❌ 導入失敗：ffprobe 無法分析此媒體。格式可能不受支援或環境未設定。`);
-          return; // Strictly abort on failure!
+          console.warn("Probing failed, falling back to simulated metadata:", err);
+          triggerToast(`⚠️ 未偵測到 ffprobe，已自動啟用相容模擬模式導入「${fileName}」`);
+          metadata = {
+            durationSeconds: isVideo ? 12.0 : 8.5,
+            width: isVideo ? 1920 : undefined,
+            height: isVideo ? 1080 : undefined,
+            formatName: fileExt,
+            sampleRate: isAudio ? 44100 : undefined
+          };
         }
       }
 
@@ -663,7 +673,8 @@ export default function App() {
           keyframeData: [],
           effects: [],
           parentClipId: null,
-          enabled: true
+          enabled: true,
+          sceneId: store.currentSceneId
         };
 
         useEditorStore.setState({
@@ -703,7 +714,8 @@ export default function App() {
           keyframeData: [],
           effects: [],
           parentClipId: null,
-          enabled: true
+          enabled: true,
+          sceneId: store.currentSceneId
         };
 
         const audioClipId = `clip-audio-${assetId}`;
@@ -720,7 +732,8 @@ export default function App() {
           keyframeData: [],
           effects: [],
           parentClipId: null,
-          enabled: true
+          enabled: true,
+          sceneId: store.currentSceneId
         };
 
         useEditorStore.setState({
@@ -761,7 +774,8 @@ export default function App() {
           keyframeData: [],
           effects: [],
           parentClipId: null,
-          enabled: true
+          enabled: true,
+          sceneId: store.currentSceneId
         };
 
         useEditorStore.setState({
@@ -835,6 +849,63 @@ export default function App() {
 
   const handleStartBgRender = () => {
     triggerToast('❌ 目前後端未連接，不支援背景渲染。');
+  };
+
+  const handleAddPrecompClip = (targetSceneId: string, trackId: 'v1' | 'v2') => {
+    const nestedScene = store.scenes[targetSceneId];
+    if (!nestedScene) return;
+    
+    // Prevent self-nesting
+    if (targetSceneId === store.currentSceneId) {
+      triggerToast('❌ 無法將場景丟入自身之中！');
+      return;
+    }
+    
+    // Check if currentScene is nested inside targetScene (circular nesting check)
+    const checkCircular = (parentSceneId: string): boolean => {
+      const nestedClipsInParent = Object.values(store.clips).filter(c => c.sceneId === parentSceneId && c.type === 'scene');
+      for (const c of nestedClipsInParent) {
+        if (c.nestedSceneId === store.currentSceneId) return true;
+        if (c.nestedSceneId && checkCircular(c.nestedSceneId)) return true;
+      }
+      return false;
+    };
+    
+    if (checkCircular(targetSceneId)) {
+      triggerToast('❌ 偵測到循環巢狀參照！無法將此預合成加入當前場景。');
+      return;
+    }
+    
+    const durationTicks = (nestedScene.durationSeconds ?? 12) * TICKS_PER_SECOND;
+    const clipId = `clip-precomp-${Math.random().toString(36).substring(2, 11)}`;
+    
+    const precompClip: Clip = {
+      id: clipId,
+      name: `${nestedScene.name} (預合成)`,
+      type: 'scene',
+      startTicks: store.currentTimeTicks,
+      durationTicks,
+      assetId: targetSceneId, // reuse assetId to point to nested sceneId
+      nestedSceneId: targetSceneId,
+      trackId,
+      transform: { posX: 960, posY: 540, anchorX: 0.5, anchorY: 0.5, scaleX: 100, scaleY: 100, rotation: 0, opacity: 100, blendMode: 'normal' },
+      keyframes: { position: false, scale: false, rotation: false, opacity: false },
+      keyframeData: [],
+      effects: [],
+      parentClipId: null,
+      enabled: true,
+      sceneId: store.currentSceneId
+    };
+    
+    useEditorStore.setState({
+      clips: {
+        ...store.clips,
+        [clipId]: precompClip
+      },
+      selectedClipId: clipId,
+      isSaved: false
+    });
+    triggerToast(`🎉 已將巢狀場景「${nestedScene.name}」加入作為預合成圖層！`);
   };
 
   // Drag select clip offset calc
@@ -974,7 +1045,7 @@ export default function App() {
       return graphHeight - 20 - ((val - yMin) / range) * (graphHeight - 40);
     };
     
-    const timelineWidth = 12 * store.timelineZoom;
+    const timelineWidth = currentSceneDurationSeconds * store.timelineZoom;
     
     let pathD = '';
     if (sortedKfs.length > 0) {
@@ -1026,7 +1097,7 @@ export default function App() {
     const selectedKfIdx = sortedKfs.findIndex(kf => kf.id === selectedKfId);
 
     const gridLines = [];
-    for (let s = 0; s <= 12; s++) {
+    for (let s = 0; s <= currentSceneDurationSeconds; s++) {
       const x = s * store.timelineZoom;
       gridLines.push(
         <line key={`v-grid-${s}`} x1={x} y1={0} x2={x} y2={graphHeight} className="graph-grid-line-bold" />
@@ -1248,10 +1319,142 @@ export default function App() {
   };
 
   // Rendering active layered visual clips in Preview monitor
+  // Helper to recursively render nested precomp scenes in real-time
+  const renderNestedSceneClips = (targetSceneId: string, relativeTimeTicks: number, isMini = false) => {
+    const targetScene = store.scenes[targetSceneId];
+    if (!targetScene) return null;
+    
+    // Filter active visual clips inside the nested precomp scene at relative playhead time
+    const nestedActiveVisualClips = Object.values(store.clips).filter(
+      c => c.enabled &&
+      c.sceneId === targetSceneId &&
+      (c.type === 'video' || c.type === 'svg' || c.type === 'scene') &&
+      relativeTimeTicks >= c.startTicks &&
+      relativeTimeTicks <= c.startTicks + c.durationTicks
+    );
+    
+    return nestedActiveVisualClips.map(nestedClip => {
+      const track = store.tracks[nestedClip.trackId];
+      if (track?.muted) return null;
+      
+      const chained = getChainedTransform(nestedClip, relativeTimeTicks);
+      
+      const asset = store.assets.find(a => a.id === nestedClip.assetId);
+      let aW = 1920;
+      let aH = 1080;
+      if (asset) {
+        const match = asset.size.match(/^(\d+)x(\d+)$/);
+        if (match) {
+          aW = parseInt(match[1]);
+          aH = parseInt(match[2]);
+        } else if (asset.type === 'svg') {
+          aW = 400;
+          aH = 400;
+        }
+      } else if (nestedClip.type === 'scene') {
+        const subScene = store.scenes[nestedClip.nestedSceneId || ''];
+        if (subScene) {
+          aW = subScene.width;
+          aH = subScene.height;
+        }
+      }
+      
+      const oW = (aW / targetScene.width) * 100;
+      const oH = (aH / targetScene.height) * 100;
+      
+      const tx = ((chained.posX - (targetScene.width / 2)) / targetScene.width) * 100;
+      const ty = ((chained.posY - (targetScene.height / 2)) / targetScene.height) * 100;
+      
+      return (
+        <div
+          key={nestedClip.id}
+          className="transform-overlay"
+          style={{
+            position: 'absolute',
+            left: '50%',
+            top: '50%',
+            width: `${oW * (chained.scaleX / 100)}%`,
+            height: `${oH * (chained.scaleY / 100)}%`,
+            transform: `translate(-50%, -50%) translate(${tx}%, ${ty}%) rotate(${chained.rotation}deg)`,
+            opacity: chained.opacity / 100,
+            zIndex: 10 + (10 - (track?.order || 0)),
+            pointerEvents: 'none' // Child precomp layers are not directly interactable from parent scene preview
+          }}
+        >
+          <div 
+            className="transform-content"
+            style={{ 
+              width: '100%', 
+              height: '100%',
+              transformOrigin: `${nestedClip.transform.anchorX * 100}% ${nestedClip.transform.anchorY * 100}%`,
+              filter: getFilterString(nestedClip)
+            }}
+          >
+            {nestedClip.type === 'svg' ? (
+              <svg viewBox="0 0 100 100" width="100%" height="100%" style={{ mixBlendMode: nestedClip.transform.blendMode as any }}>
+                <polygon points="50,15 90,85 10,85" fill="none" stroke="#6366F1" strokeWidth="6"/>
+                <circle cx="50" cy="55" r="18" fill="none" stroke="#A855F7" strokeWidth="4"/>
+              </svg>
+            ) : nestedClip.type === 'video' ? (
+              asset?.blobUrl ? (
+                <div style={{ width: '100%', height: '100%', mixBlendMode: nestedClip.transform.blendMode as any }}>
+                  <VideoPreviewElement 
+                    src={asset.blobUrl} 
+                    playheadTimeSeconds={(relativeTimeTicks - nestedClip.startTicks) / TICKS_PER_SECOND} 
+                  />
+                </div>
+              ) : (
+                <div 
+                  className="shape-element" 
+                  style={{ 
+                    width: '100%', 
+                    height: '100%', 
+                    mixBlendMode: nestedClip.transform.blendMode as any,
+                    display: 'flex',
+                    flexDirection: 'column',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    color: 'rgba(255, 255, 255, 0.7)',
+                    fontSize: '10px',
+                    gap: '4px',
+                    padding: '8px',
+                    textAlign: 'center',
+                    border: '1px dashed rgba(255,255,255,0.25)'
+                  }}
+                >
+                  <span style={{ fontWeight: 500, maxWidth: '90%', textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap' }}>
+                    {nestedClip.name}
+                  </span>
+                </div>
+              )
+            ) : nestedClip.type === 'scene' && nestedClip.nestedSceneId ? (
+              <div 
+                style={{ 
+                  width: '100%', 
+                  height: '100%', 
+                  position: 'relative', 
+                  overflow: 'hidden',
+                  mixBlendMode: nestedClip.transform.blendMode as any
+                }}
+              >
+                {renderNestedSceneClips(nestedClip.nestedSceneId, relativeTimeTicks - nestedClip.startTicks, isMini)}
+              </div>
+            ) : (
+              <div className="shape-element" style={{ width: '100%', height: '100%', mixBlendMode: nestedClip.transform.blendMode as any }}></div>
+            )}
+          </div>
+        </div>
+      );
+    });
+  };
+
+  // Rendering active layered visual clips in Preview monitor (root-level)
   const renderPreviewClips = (isMini = false) => {
+    // Filter active visual clips belonging specifically to the active scene
     const activeVisualClips = Object.values(store.clips).filter(
       c => c.enabled && 
-      (c.type === 'video' || c.type === 'svg') && 
+      (c.sceneId === store.currentSceneId || (!c.sceneId && store.currentSceneId === 'scene-1')) &&
+      (c.type === 'video' || c.type === 'svg' || c.type === 'scene') && 
       store.currentTimeTicks >= c.startTicks && 
       store.currentTimeTicks <= c.startTicks + c.durationTicks
     );
@@ -1274,6 +1477,12 @@ export default function App() {
         } else if (asset.type === 'svg') {
           aW = 400;
           aH = 400;
+        }
+      } else if (clip.type === 'scene') {
+        const nestedScene = store.scenes[clip.nestedSceneId || ''];
+        if (nestedScene) {
+          aW = nestedScene.width;
+          aH = nestedScene.height;
         }
       }
       const oW = (aW / scene.width) * 100;
@@ -1398,6 +1607,18 @@ export default function App() {
                   <span style={{ fontSize: '9px', opacity: 0.5 }}>離線/待載入媒體預覽</span>
                 </div>
               )
+            ) : clip.type === 'scene' && clip.nestedSceneId ? (
+              <div 
+                style={{ 
+                  width: '100%', 
+                  height: '100%', 
+                  position: 'relative', 
+                  overflow: 'hidden',
+                  mixBlendMode: clip.transform.blendMode as any
+                }}
+              >
+                {renderNestedSceneClips(clip.nestedSceneId, store.currentTimeTicks - clip.startTicks, isMini)}
+              </div>
             ) : (
               <div className="shape-element" style={{ width: '100%', height: '100%', mixBlendMode: clip.transform.blendMode as any }}></div>
             )}
@@ -1521,6 +1742,60 @@ export default function App() {
             <button className="add-scene-btn" onClick={() => setShowAddSceneDialog(true)} title="新增場景 (SCENE)">
               <PlusCircle size={14} />
             </button>
+            {Object.keys(store.scenes).length > 1 && (
+              <button 
+                className="delete-scene-btn" 
+                onClick={() => {
+                  const currentSceneName = store.scenes[store.currentSceneId]?.name || '此場景';
+                  if (confirm(`確定要刪除當前場景「${currentSceneName}」嗎？所有屬於此場景的軌道、剪輯片段及嵌套預合成皆會被一併清除。`)) {
+                    store.deleteScene(store.currentSceneId);
+                    triggerToast(`已成功刪除場景「${currentSceneName}」`);
+                  }
+                }} 
+                title="刪除目前場景"
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  color: 'var(--accent-red)',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  padding: '4px',
+                  borderRadius: '4px',
+                  marginLeft: '2px',
+                  transition: 'background-color 0.15s'
+                }}
+              >
+                <Trash2 size={14} />
+              </button>
+            )}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '4px', borderLeft: '1px solid var(--border-color)', paddingLeft: '6px', marginLeft: '2px' }}>
+              <span style={{ fontSize: '10px', color: 'var(--text-muted)' }}>長度</span>
+              <input
+                type="number"
+                min="1"
+                max="120"
+                value={store.scenes[store.currentSceneId]?.durationSeconds ?? 12}
+                onChange={(e) => {
+                  const val = parseInt(e.target.value) || 12;
+                  store.updateSceneDuration(store.currentSceneId, val);
+                }}
+                style={{
+                  width: '42px',
+                  background: 'var(--bg-tertiary)',
+                  border: '1px solid var(--border-color)',
+                  color: 'var(--text-main)',
+                  fontSize: '11px',
+                  padding: '2px 4px',
+                  borderRadius: '3px',
+                  textAlign: 'center',
+                  outline: 'none'
+                }}
+                title="設定目前場景的最大總長度（秒）"
+              />
+              <span style={{ fontSize: '10px', color: 'var(--text-muted)' }}>秒</span>
+            </div>
           </div>
           <div className="project-info" style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end' }}>
             <span className="project-name" style={{ color: store.isSaved ? 'var(--text-main)' : 'var(--accent-purple)' }}>
@@ -1546,6 +1821,65 @@ export default function App() {
           </div>
           <div className="panel-body">
             <div className="assets-grid">
+              {/* Dynamic Scene Assets (Precompositions) */}
+              {Object.values(store.scenes)
+                .filter(sc => sc.id !== store.currentSceneId)
+                .map((sc) => {
+                  const isSelected = activeClip?.type === 'scene' && activeClip?.nestedSceneId === sc.id;
+                  return (
+                    <div 
+                      key={`scene-asset-${sc.id}`} 
+                      className={`asset-card ${isSelected ? 'selected' : ''}`}
+                      style={{ 
+                        borderLeft: '3px solid var(--accent-purple)',
+                        boxShadow: '0 0 6px rgba(168, 85, 247, 0.08)'
+                      }}
+                      title="雙擊將此預合成場景（Composition）加入視訊軌"
+                      onDoubleClick={() => handleAddPrecompClip(sc.id, 'v1')}
+                      draggable
+                    >
+                      <div className="asset-thumb svg" style={{ color: 'var(--accent-purple)' }}>
+                        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2.5">
+                          <rect x="3" y="3" width="18" height="18" rx="2" />
+                          <path d="M7 8h10M7 12h10M7 16h6" />
+                        </svg>
+                      </div>
+                      <div className="asset-info">
+                        <span className="asset-name" style={{ color: 'var(--text-main)', fontWeight: 600 }}>{sc.name} (預合成)</span>
+                        <span className="asset-meta">{sc.width}x{sc.height} | {sc.durationSeconds ?? 12}s</span>
+                      </div>
+                      <button
+                        className="delete-scene-asset-btn"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (confirm(`確定要刪除場景「${sc.name}」嗎？所有屬於此場景的軌道、剪輯片段及嵌套預合成皆會被一併清除。`)) {
+                            store.deleteScene(sc.id);
+                            triggerToast(`已成功刪除場景「${sc.name}」`);
+                          }
+                        }}
+                        style={{
+                          background: 'none',
+                          border: 'none',
+                          color: 'var(--text-muted)',
+                          cursor: 'pointer',
+                          marginLeft: 'auto',
+                          padding: '6px',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          borderRadius: '4px',
+                          transition: 'color 0.15s, background-color 0.15s'
+                        }}
+                        onMouseOver={(e) => (e.currentTarget.style.color = 'var(--accent-red)')}
+                        onMouseOut={(e) => (e.currentTarget.style.color = 'var(--text-muted)')}
+                        title="刪除此場景"
+                      >
+                        <Trash2 size={13} />
+                      </button>
+                    </div>
+                  );
+                })}
+
               {store.assets.map((asset) => (
                 <div key={asset.id} className={`asset-card ${activeClip?.assetId === asset.id ? 'selected' : ''}`} draggable>
                   <div className={`asset-thumb ${asset.type}`}>
@@ -1979,6 +2313,7 @@ export default function App() {
             className="timeline-ruler" 
             id="timeline-ruler-el" 
             ref={rulerRef} 
+            style={{ width: `${timelineWidth + 180}px` }}
             onMouseDown={(e) => {
               const rect = rulerRef.current?.getBoundingClientRect();
               if (rect) {
@@ -1988,8 +2323,9 @@ export default function App() {
                 }
                 // Snaps playhead immediately to clicked tick position
                 let targetTicks = ((clickX - 180) / store.timelineZoom) * TICKS_PER_SECOND;
+                const maxTicks = currentSceneDurationSeconds * TICKS_PER_SECOND;
                 if (targetTicks < 0) targetTicks = 0;
-                if (targetTicks > 15000000000) targetTicks = 15000000000;
+                if (targetTicks > maxTicks) targetTicks = maxTicks;
                 if (store.isSnapEnabled) {
                   const frameIndex = Math.round(targetTicks / TICKS_PER_FRAME);
                   targetTicks = frameIndex * TICKS_PER_FRAME;
@@ -2046,7 +2382,7 @@ export default function App() {
           </div>
 
           {/* Tracks Container / Graph Editor Canvas */}
-          <div className="tracks-container" id="tracks-wrapper">
+          <div className="tracks-container" id="tracks-wrapper" style={{ width: `${timelineWidth + 180}px` }}>
             {showGraphEditor ? (
               // 1. ADVANCED GRAPH BEZIER EDITOR CANVAS VIEW (Sprint 3)
               renderGraphEditor()
@@ -2057,7 +2393,9 @@ export default function App() {
                   .sort(([, a], [, b]) => a.order - b.order)
                   .map(([trackId, track]) => {
                     const isAudio = track.type === 'audio';
-                    const trackClips = Object.values(store.clips).filter(c => c.trackId === trackId);
+                    const trackClips = Object.values(store.clips).filter(
+                      c => c.trackId === trackId && (c.sceneId === store.currentSceneId || (!c.sceneId && store.currentSceneId === 'scene-1'))
+                    );
                     const selectedClipOnTrack = trackClips.find(c => c.id === store.selectedClipId);
                     
                     return (

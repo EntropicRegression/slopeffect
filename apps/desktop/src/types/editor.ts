@@ -3,6 +3,7 @@ export interface Scene {
   name: string;
   width: number;
   height: number;
+  durationSeconds?: number;
 }
 
 export interface Transform {
@@ -37,7 +38,7 @@ export interface KeyframesState {
 export interface Clip {
   id: string;
   name: string;
-  type: 'video' | 'audio' | 'svg' | 'image';
+  type: 'video' | 'audio' | 'svg' | 'image' | 'scene';
   startTicks: number;
   durationTicks: number;
   assetId: string;
@@ -48,6 +49,8 @@ export interface Clip {
   effects: Effect[];
   parentClipId: string | null;
   enabled: boolean;
+  sceneId: string;        // Specifies which scene/composition this clip belongs to
+  nestedSceneId?: string; // Reference to nested scene when type === 'scene'
 }
 
 export interface Effect {

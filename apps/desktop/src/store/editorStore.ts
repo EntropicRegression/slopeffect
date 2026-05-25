@@ -141,6 +141,7 @@ interface EditorState {
   reorderTrack: (trackId: string, newOrder: number) => void;
   switchScene: (sceneId: string) => void;
   addScene: (name: string, width: number, height: number) => void;
+  deleteScene: (sceneId: string) => void;
   updateSceneDuration: (sceneId: string, durationSeconds: number) => void;
   importAsset: (asset: Asset) => void;
   splitClip: () => void;
@@ -488,6 +489,38 @@ export const useEditorStore = create<EditorState>((set) => ({
         [id]: { id, name, width, height, durationSeconds: 12 }
       },
       currentSceneId: id
+    };
+  }),
+
+  deleteScene: (sceneId) => set((state) => {
+    const sceneIds = Object.keys(state.scenes);
+    if (sceneIds.length <= 1) {
+      return {};
+    }
+    
+    const nextScenes = { ...state.scenes };
+    delete nextScenes[sceneId];
+    
+    const nextClips = { ...state.clips };
+    Object.keys(nextClips).forEach(clipId => {
+      const clip = nextClips[clipId];
+      if (clip.sceneId === sceneId || clip.nestedSceneId === sceneId) {
+        delete nextClips[clipId];
+      }
+    });
+    
+    let nextCurrentSceneId = state.currentSceneId;
+    if (state.currentSceneId === sceneId) {
+      const remainingIds = Object.keys(nextScenes);
+      nextCurrentSceneId = remainingIds[0];
+    }
+    
+    return {
+      isSaved: false,
+      scenes: nextScenes,
+      clips: nextClips,
+      currentSceneId: nextCurrentSceneId,
+      selectedClipId: state.selectedClipId && nextClips[state.selectedClipId] ? state.selectedClipId : null
     };
   }),
 
