@@ -474,7 +474,7 @@ export default function App() {
         const trackContent = document.querySelector('.track-content');
         if (trackContent) {
           const rect = trackContent.getBoundingClientRect();
-          const cursorXOnTrack = e.clientX - rect.left - 180;
+          const cursorXOnTrack = e.clientX - rect.left;
           let targetX = cursorXOnTrack - dragClipOffset;
           let targetTicks = (targetX / store.timelineZoom) * TICKS_PER_SECOND;
           
@@ -1058,7 +1058,10 @@ export default function App() {
             padding: '12px',
             gap: '12px',
             zIndex: 50,
-            boxShadow: '3px 0 8px rgba(0,0,0,0.15)'
+            boxShadow: '3px 0 8px rgba(0,0,0,0.15)',
+            position: 'sticky',
+            left: 0,
+            height: '100%'
           }}
         >
           <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
@@ -1972,7 +1975,30 @@ export default function App() {
         
         <div className="timeline-body" id="timeline-body-scroll" ref={trackWrapperRef}>
           {/* Ruler Area */}
-          <div className="timeline-ruler" id="timeline-ruler-el" ref={rulerRef} onMouseDown={() => setIsDraggingPlayhead(true)}>
+          <div 
+            className="timeline-ruler" 
+            id="timeline-ruler-el" 
+            ref={rulerRef} 
+            onMouseDown={(e) => {
+              const rect = rulerRef.current?.getBoundingClientRect();
+              if (rect) {
+                const clickX = e.clientX - rect.left;
+                if (clickX < 180) {
+                  return; // Don't drag playhead if clicking track headers / media controls area
+                }
+                // Snaps playhead immediately to clicked tick position
+                let targetTicks = ((clickX - 180) / store.timelineZoom) * TICKS_PER_SECOND;
+                if (targetTicks < 0) targetTicks = 0;
+                if (targetTicks > 15000000000) targetTicks = 15000000000;
+                if (store.isSnapEnabled) {
+                  const frameIndex = Math.round(targetTicks / TICKS_PER_FRAME);
+                  targetTicks = frameIndex * TICKS_PER_FRAME;
+                }
+                store.setCurrentTimeTicks(targetTicks);
+              }
+              setIsDraggingPlayhead(true);
+            }}
+          >
             
             {/* Sticky Playback Controls directly above track headers */}
             <div className="timeline-media-controls">

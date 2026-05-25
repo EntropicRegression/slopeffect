@@ -141,6 +141,7 @@ interface EditorState {
   reorderTrack: (trackId: string, newOrder: number) => void;
   switchScene: (sceneId: string) => void;
   addScene: (name: string, width: number, height: number) => void;
+  updateSceneDuration: (sceneId: string, durationSeconds: number) => void;
   importAsset: (asset: Asset) => void;
   splitClip: () => void;
   deleteClip: () => void;
@@ -484,9 +485,21 @@ export const useEditorStore = create<EditorState>((set) => ({
       isSaved: false,
       scenes: {
         ...state.scenes,
-        [id]: { id, name, width, height }
+        [id]: { id, name, width, height, durationSeconds: 12 }
       },
       currentSceneId: id
+    };
+  }),
+
+  updateSceneDuration: (sceneId, durationSeconds) => set((state) => {
+    const scene = state.scenes[sceneId];
+    if (!scene) return {};
+    return {
+      isSaved: false,
+      scenes: {
+        ...state.scenes,
+        [sceneId]: { ...scene, durationSeconds: Math.max(1, durationSeconds) }
+      }
     };
   }),
 
@@ -677,10 +690,20 @@ export const useEditorStore = create<EditorState>((set) => ({
     };
   }),
 
-  stepForward: () => set((state) => ({ currentTimeTicks: Math.min(15000000000, state.currentTimeTicks + TICKS_PER_FRAME) })),
+  stepForward: () => set((state) => {
+    const scene = state.scenes[state.currentSceneId];
+    const durationSeconds = scene?.durationSeconds ?? 12;
+    const maxTicks = durationSeconds * TICKS_PER_SECOND;
+    return { currentTimeTicks: Math.min(maxTicks, state.currentTimeTicks + TICKS_PER_FRAME) };
+  }),
   stepBackward: () => set((state) => ({ currentTimeTicks: Math.max(0, state.currentTimeTicks - TICKS_PER_FRAME) })),
   skipToStart: () => set({ currentTimeTicks: 0 }),
-  skipToEnd: () => set({ currentTimeTicks: 15000000000 }),
+  skipToEnd: () => set((state) => {
+    const scene = state.scenes[state.currentSceneId];
+    const durationSeconds = scene?.durationSeconds ?? 12;
+    const maxTicks = durationSeconds * TICKS_PER_SECOND;
+    return { currentTimeTicks: maxTicks };
+  }),
 
   // Undo/Redo Engine
   recordCommand: (cmd) => set((state) => ({

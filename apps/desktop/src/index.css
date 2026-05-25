@@ -618,7 +618,6 @@ body.slopeffect-dark {
 .kf-lane-track {
   flex: 1;
   position: relative;
-  padding-left: 180px;
 }
 .kf-diamond {
   position: absolute;
@@ -1085,10 +1084,9 @@ body.slopeffect-dark {
 .ruler-ticks {
   position: absolute;
   top: 0;
-  left: 0;
-  width: 100%;
+  left: 180px;
+  right: 0;
   height: 100%;
-  padding-left: 180px; /* Offset for track headers */
 }
 .tick-mark {
   position: absolute;
@@ -1160,7 +1158,7 @@ body.slopeffect-dark {
   justify-content: space-between;
   position: sticky;
   left: 0;
-  z-index: 40;
+  z-index: 70;
   box-shadow: 5px 0 10px rgba(0,0,0,0.1);
 }
 .track-title {
@@ -1206,7 +1204,6 @@ body.slopeffect-dark {
 .track-content {
   flex: 1;
   position: relative;
-  padding-left: 180px; /* Align to ticks container */
   background-image: linear-gradient(rgba(255,255,255,0.01) 1px, transparent 1px);
   background-size: 100% 60px;
 }
@@ -1857,7 +1854,7 @@ body.slopeffect-dark {
   background-color: var(--bg-secondary);
   border-right: 1px solid var(--border-color);
   border-bottom: 1px solid var(--border-color);
-  z-index: 55;
+  z-index: 70;
   display: flex;
   flex-direction: column;
   justify-content: space-between;
