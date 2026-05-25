@@ -533,6 +533,113 @@ body.slopeffect-dark {
   background-color: var(--primary);
 }
 
+/* Anchor Point Handle */
+.handle-anchor {
+  position: absolute;
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: move;
+  color: #F59E0B;
+  z-index: 15;
+  filter: drop-shadow(0 0 3px rgba(245, 158, 11, 0.6));
+  border: none !important;
+  background: none !important;
+  border-radius: 0 !important;
+}
+.handle-anchor:hover {
+  color: #FBBF24;
+  filter: drop-shadow(0 0 6px rgba(245, 158, 11, 0.8));
+}
+
+/* Track Drag Icon */
+.track-drag-icon {
+  opacity: 0.3;
+  cursor: grab;
+  margin-right: 4px;
+  flex-shrink: 0;
+}
+.track-drag-icon:hover {
+  opacity: 0.7;
+}
+
+/* ========================================= */
+/* Keyframe Property Lanes in Timeline       */
+/* ========================================= */
+.keyframe-lanes-container {
+  border-top: 1px solid rgba(99, 102, 241, 0.2);
+  background: rgba(99, 102, 241, 0.03);
+}
+.kf-lanes-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 3px 8px;
+  font-size: 9px;
+  font-weight: 700;
+  color: var(--primary);
+  background: rgba(99, 102, 241, 0.06);
+  border-bottom: 1px solid rgba(99, 102, 241, 0.1);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.kf-collapse-btn {
+  background: none;
+  border: none;
+  color: var(--text-dark);
+  cursor: pointer;
+  padding: 2px;
+  display: flex;
+}
+.kf-collapse-btn:hover {
+  color: var(--primary);
+}
+.kf-property-lane {
+  display: flex;
+  height: 22px;
+  border-bottom: 1px solid rgba(255,255,255,0.03);
+}
+.kf-lane-label {
+  width: 180px;
+  font-size: 9px;
+  color: var(--text-dark);
+  padding: 4px 12px 4px 24px;
+  display: flex;
+  align-items: center;
+  background: var(--bg-secondary);
+  border-right: 1px solid var(--border-color);
+  position: sticky;
+  left: 0;
+  z-index: 40;
+  box-shadow: 5px 0 10px rgba(0,0,0,0.1);
+}
+.kf-lane-track {
+  flex: 1;
+  position: relative;
+  padding-left: 180px;
+}
+.kf-diamond {
+  position: absolute;
+  top: 50%;
+  transform: translate(-50%, -50%) rotate(0deg);
+  cursor: pointer;
+  color: #6366F1;
+  z-index: 5;
+  transition: color 0.15s, transform 0.15s;
+}
+.kf-diamond:hover {
+  color: #EF4444;
+  transform: translate(-50%, -50%) scale(1.4);
+}
+.kf-diamond.eased {
+  color: #F59E0B;
+}
+.kf-diamond.eased:hover {
+  color: #EF4444;
+}
+
 .shape-element {
   background-color: var(--primary);
   width: 80%;
@@ -1059,6 +1166,8 @@ body.slopeffect-dark {
 .track-title {
   font-weight: 600;
   font-size: 11px;
+  display: flex;
+  align-items: center;
 }
 .track-actions {
   display: flex;
@@ -1863,5 +1972,119 @@ body.slopeffect-dark {
 .volume-slider-compact::-webkit-slider-thumb:hover {
   background: var(--text-main);
 }
+
+/* Graph Editor Styles */
+.graph-editor-canvas-container {
+  position: relative;
+  min-height: 270px;
+  background-color: rgba(12, 12, 18, 0.45);
+  border-top: 1px solid var(--border-color);
+  overflow: hidden;
+  user-select: none;
+}
+
+.graph-grid-line {
+  stroke: rgba(255, 255, 255, 0.03);
+  stroke-width: 1px;
+}
+
+.graph-grid-line-bold {
+  stroke: rgba(255, 255, 255, 0.08);
+  stroke-width: 1px;
+}
+
+.graph-grid-label {
+  fill: var(--text-dark);
+  font-size: 8px;
+  font-family: monospace;
+  user-select: none;
+}
+
+.graph-curve-line {
+  fill: none;
+  stroke: var(--primary);
+  stroke-width: 2px;
+  filter: drop-shadow(0 0 4px rgba(99, 102, 241, 0.4));
+}
+
+.graph-handle-line {
+  stroke: rgba(168, 85, 247, 0.5);
+  stroke-width: 1.5px;
+  stroke-dasharray: 2,2;
+}
+
+.graph-handle-circle {
+  fill: #A855F7;
+  stroke: var(--text-main);
+  stroke-width: 1.5px;
+  cursor: grab;
+  transition: r var(--transition-fast), fill var(--transition-fast);
+}
+
+.graph-handle-circle:hover {
+  fill: var(--text-main);
+  r: 6;
+}
+
+.graph-keyframe-point {
+  fill: var(--primary);
+  stroke: var(--text-main);
+  stroke-width: 1.5px;
+  cursor: pointer;
+  transition: transform var(--transition-fast);
+}
+
+.graph-keyframe-point.selected {
+  fill: #EAB308;
+  stroke: var(--text-main);
+}
+
+.graph-keyframe-point:hover {
+  transform: scale(1.2);
+}
+
+.graph-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: rgba(255, 255, 255, 0.02);
+  border-bottom: 1px solid var(--border-color);
+  padding: 6px 12px;
+  font-size: 11px;
+}
+
+.graph-toolbar select {
+  background: var(--bg-secondary);
+  color: var(--text-main);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  padding: 2px 8px;
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.graph-preset-btn {
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  color: var(--text-muted);
+  padding: 2px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 10px;
+  transition: all var(--transition-fast);
+}
+
+.graph-preset-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text-main);
+  border-color: var(--text-muted);
+}
+
+.graph-preset-btn.active {
+  background: var(--primary-glow);
+  color: var(--primary);
+  border-color: var(--primary);
+}
+
 
 

@@ -8,11 +8,23 @@ export interface Scene {
 export interface Transform {
   posX: number;
   posY: number;
+  anchorX: number;  // 0.0 ~ 1.0, default 0.5 = center
+  anchorY: number;  // 0.0 ~ 1.0, default 0.5 = center
   scaleX: number;
   scaleY: number;
   rotation: number;
   opacity: number;
   blendMode: string;
+}
+
+export interface Keyframe {
+  id: string;
+  timeTicks: number;
+  property: 'posX' | 'posY' | 'anchorX' | 'anchorY' | 'scaleX' | 'scaleY' | 'rotation' | 'opacity';
+  value: number;
+  easing: 'linear' | 'easeIn' | 'easeOut' | 'easeInOut' | 'bezier' | 'hold';
+  handleOut?: { x: number; y: number };
+  handleIn?: { x: number; y: number };
 }
 
 export interface KeyframesState {
@@ -32,7 +44,17 @@ export interface Clip {
   trackId: string;
   transform: Transform;
   keyframes: KeyframesState;
+  keyframeData: Keyframe[];
+  effects: Effect[];
+  parentClipId: string | null;
   enabled: boolean;
+}
+
+export interface Effect {
+  id: string;
+  type: 'blur' | 'brightness' | 'contrast' | 'grayscale' | 'sepia' | 'hueRotate' | 'saturate' | 'invert' | 'dropShadow';
+  enabled: boolean;
+  params: Record<string, number>;
 }
 
 export interface TrackStatus {

@@ -15,4 +15,4 @@ slopeffect-project = { path = "../../../crates/slopeffect-project" }
 slopeffect-media = { path = "../../../crates/slopeffect-media" }
 
 [build-dependencies]
-tauri-build = { version = "2.0.0-rc" }
+tauri-build = { version = "2.0.0-rc", features = [] }
