@@ -144,6 +144,7 @@ interface EditorState {
   deleteScene: (sceneId: string) => void;
   updateSceneDuration: (sceneId: string, durationSeconds: number) => void;
   importAsset: (asset: Asset) => void;
+  deleteAsset: (assetId: string) => void;
   splitClip: () => void;
   deleteClip: () => void;
   toggleTrackMute: (trackId: string) => void;
@@ -541,6 +542,26 @@ export const useEditorStore = create<EditorState>((set) => ({
     return {
       isSaved: false,
       assets: [...state.assets, asset]
+    };
+  }),
+
+  deleteAsset: (assetId) => set((state) => {
+    const nextAssets = state.assets.filter(a => a.id !== assetId);
+    
+    // Clean up clips associated with this asset
+    const nextClips = { ...state.clips };
+    Object.keys(nextClips).forEach(clipId => {
+      const clip = nextClips[clipId];
+      if (clip.assetId === assetId) {
+        delete nextClips[clipId];
+      }
+    });
+    
+    return {
+      isSaved: false,
+      assets: nextAssets,
+      clips: nextClips,
+      selectedClipId: state.selectedClipId && nextClips[state.selectedClipId] ? state.selectedClipId : null
     };
   }),
 
