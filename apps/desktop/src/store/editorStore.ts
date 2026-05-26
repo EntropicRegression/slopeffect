@@ -98,6 +98,47 @@ const TICKS_PER_SECOND = 1000000000;
 const FPS = 30;
 const TICKS_PER_FRAME = TICKS_PER_SECOND / FPS;
 
+// ---- Track helper utilities ----
+
+/** Find the first unlocked track of the given type, sorted by order. Returns null if none. */
+export const findDefaultTrack = (
+  type: 'video' | 'audio',
+  tracks: Record<string, TrackStatus>
+): string | null => {
+  const sorted = Object.entries(tracks)
+    .filter(([, t]) => t.type === type && !t.locked)
+    .sort(([, a], [, b]) => a.order - b.order);
+  return sorted.length > 0 ? sorted[0][0] : null;
+};
+
+/**
+ * Ensure a default track of the given type exists and is unlocked.
+ * If no suitable track exists, creates one and returns its id.
+ * Mutates the tracks record in place when creating.
+ */
+export const ensureDefaultTrack = (
+  type: 'video' | 'audio',
+  tracks: Record<string, TrackStatus>
+): string => {
+  const existing = findDefaultTrack(type, tracks);
+  if (existing) return existing;
+
+  // Create a new track
+  const prefix = type === 'video' ? 'v' : 'a';
+  let counter = 1;
+  let newId = `${prefix}${counter}`;
+  while (tracks[newId]) {
+    counter++;
+    newId = `${prefix}${counter}`;
+  }
+  const maxOrder = Math.max(...Object.values(tracks).map(t => t.order), -1);
+  const defaultName = type === 'video' ? `V${counter} 影片圖層` : `A${counter} 音訊軌`;
+  tracks[newId] = type === 'audio'
+    ? { type: 'audio' as const, name: defaultName, order: maxOrder + 1, muted: false, locked: false, solo: false }
+    : { type: 'video' as const, name: defaultName, order: maxOrder + 1, muted: false, locked: false };
+  return newId;
+};
+
 interface EditorState {
   projectName: string;
   projectFilePath: string | null;
@@ -153,6 +194,7 @@ interface EditorState {
   toggleAudioSolo: (trackId: string) => void;
   addTrack: (type: 'video' | 'audio', name?: string) => string;
   removeTrack: (trackId: string) => void;
+  moveClip: (clipId: string, startTicks: number, trackId: string) => void;
   
   // Effects Stack & Parenting (Sprint 2)
   addEffect: (clipId: string, type: Effect['type']) => void;
@@ -538,7 +580,8 @@ export const useEditorStore = create<EditorState>((set) => ({
   }),
 
   importAsset: (asset) => set((state) => {
-    if (state.assets.some((a) => a.name === asset.name)) return {};
+    // Use id to detect duplicates — allow same-name assets with different ids
+    if (state.assets.some((a) => a.id === asset.id)) return {};
     return {
       isSaved: false,
       assets: [...state.assets, asset]
@@ -723,6 +766,9 @@ export const useEditorStore = create<EditorState>((set) => ({
   removeTrack: (trackId) => set((state) => {
     const track = state.tracks[trackId];
     if (!track) return {};
+    // Protect: don't allow deleting the last track of a given type
+    const sameTypeTracks = Object.values(state.tracks).filter(t => t.type === track.type);
+    if (sameTypeTracks.length <= 1) return {};
     const nextClips = { ...state.clips };
     Object.values(nextClips).forEach(c => {
       if (c.trackId === trackId) delete nextClips[c.id];
@@ -948,6 +994,24 @@ export const useEditorStore = create<EditorState>((set) => ({
             }
           })
         }
+      }
+    };
+  }),
+
+  // ---- Move Clip (Drag commit) ----
+  moveClip: (clipId, startTicks, trackId) => set((state) => {
+    const clip = state.clips[clipId];
+    if (!clip) return {};
+    const track = state.tracks[trackId];
+    if (!track || track.locked) return {};
+    // Type guard: audio clips → audio tracks, everything else → video tracks
+    const isAudioClip = clip.type === 'audio';
+    if (isAudioClip !== (track.type === 'audio')) return {};
+    return {
+      isSaved: false,
+      clips: {
+        ...state.clips,
+        [clipId]: { ...clip, startTicks: Math.max(0, startTicks), trackId }
       }
     };
   })

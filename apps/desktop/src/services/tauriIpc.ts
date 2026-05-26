@@ -22,6 +22,16 @@ export const safeInvoke = async <T>(commandName: string, args: Record<string, an
   }
 };
 
+// Strict variant that throws errors instead of swallowing them.
+// Use for critical commands (e.g. export) where the caller needs to know about failures.
+export const safeInvokeStrict = async <T>(commandName: string, args: Record<string, any> = {}): Promise<T> => {
+  if (isTauriEnvironment()) {
+    return await invoke<T>(commandName, args);
+  } else {
+    throw new Error(`[Tauri Mockup] Command "${commandName}" is not available outside the Tauri environment.`);
+  }
+};
+
 // Safe event listener registration
 export const safeListen = async <T>(eventName: string, handler: (event: { payload: T }) => void): Promise<(() => void) | null> => {
   if (isTauriEnvironment()) {

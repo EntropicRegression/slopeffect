@@ -41,9 +41,10 @@ import {
   Link as LinkIcon,
   Loader2
 } from 'lucide-react';
-import { useEditorStore, evaluatePropertyAtTime } from './store/editorStore';
+import { convertFileSrc } from '@tauri-apps/api/core';
+import { useEditorStore, evaluatePropertyAtTime, ensureDefaultTrack } from './store/editorStore';
 import type { Clip, Keyframe, Asset } from './types/editor';
-import { safeInvoke } from './services/tauriIpc';
+import { safeInvoke, safeInvokeStrict, safeListen, isTauriEnvironment } from './services/tauriIpc';
 
 const TICKS_PER_SECOND = 1000000000;
 const FPS = 30;
@@ -122,6 +123,9 @@ export default function App() {
   const [dragClipOffset, setDragClipOffset] = useState(0);
   const [activeHandle, setActiveHandle] = useState<string | null>(null);
   const [transformDragStart, setTransformDragStart] = useState({ x: 0, y: 0 });
+  
+  // Drag preview state — tracks tentative clip position during drag without mutating store
+  const [dragPreview, setDragPreview] = useState<{ startTicks: number; trackId: string } | null>(null);
   
   // Playback timer ref
   const playIntervalRef = useRef<any>(null);
@@ -474,58 +478,60 @@ export default function App() {
           }
         }
       } else if (isDraggingClip && activeClip) {
-        // 1. 水平拖曳：更新選中 clip 的播放起點時間 ticks
-        const trackContent = document.querySelector('.track-content');
-        if (trackContent) {
-          const rect = trackContent.getBoundingClientRect();
+        // 1. 水平拖曳：計算目標 startTicks（使用目前所在 track row 的 rect）
+        let targetTicks = activeClip.startTicks;
+        const clipBlock = document.getElementById(activeClip.id);
+        const parentTrackContent = clipBlock?.closest('.track-content') as HTMLElement | null;
+        if (parentTrackContent) {
+          const rect = parentTrackContent.getBoundingClientRect();
           const cursorXOnTrack = e.clientX - rect.left;
-          let targetX = cursorXOnTrack - dragClipOffset;
-          let targetTicks = (targetX / store.timelineZoom) * TICKS_PER_SECOND;
+          const targetX = cursorXOnTrack - dragClipOffset;
+          targetTicks = (targetX / store.timelineZoom) * TICKS_PER_SECOND;
           
           if (targetTicks < 0) targetTicks = 0;
           if (store.isSnapEnabled) {
             const snapInterval = TICKS_PER_SECOND * 0.5;
             targetTicks = Math.round(targetTicks / snapInterval) * snapInterval;
           }
-          
-          store.clips[activeClip.id].startTicks = targetTicks;
         }
 
-        // 2. 垂直拖曳：更換軌道 (trackId)
+        // 2. 垂直拖曳：DOM hit-test to find the target track row
+        let targetTrackId = dragPreview?.trackId || activeClip.trackId;
         const tracksWrapper = document.getElementById('tracks-wrapper');
         if (tracksWrapper) {
-          const tracksRect = tracksWrapper.getBoundingClientRect();
-          const relativeY = e.clientY - tracksRect.top;
-          
+          const trackRows = tracksWrapper.querySelectorAll('.track-row');
           const sortedTracks = Object.entries(store.tracks)
             .sort(([, a], [, b]) => a.order - b.order);
-            
-          const trackIndex = Math.max(0, Math.min(sortedTracks.length - 1, Math.floor(relativeY / 60)));
-          const targetTrackId = sortedTracks[trackIndex][0];
-          const targetTrack = sortedTracks[trackIndex][1];
           
-          const clipType = activeClip.type;
-          const isAudioTrack = targetTrack.type === 'audio';
-          const isAudioClip = clipType === 'audio';
-          
-          // 音訊片段只能去音訊軌，視訊/SVG只能去視訊軌
-          if (isAudioTrack === isAudioClip) {
-            store.clips[activeClip.id].trackId = targetTrackId;
-          }
+          // Hit-test: find which track row the cursor is over
+          trackRows.forEach((row, idx) => {
+            const rowRect = row.getBoundingClientRect();
+            if (e.clientY >= rowRect.top && e.clientY <= rowRect.bottom && idx < sortedTracks.length) {
+              const candidateTrackId = sortedTracks[idx][0];
+              const candidateTrack = sortedTracks[idx][1];
+              // Type guard: audio clips → audio tracks, everything else → video tracks
+              const isAudioClip = activeClip.type === 'audio';
+              if ((candidateTrack.type === 'audio') === isAudioClip && !candidateTrack.locked) {
+                targetTrackId = candidateTrackId;
+              }
+            }
+          });
         }
         
-        // 3. 標記變更為未存檔並更新狀態
-        useEditorStore.setState({ 
-          clips: { ...store.clips },
-          isSaved: false
-        });
+        // 3. 更新 drag preview（不直接 mutate store）
+        setDragPreview({ startTicks: targetTicks, trackId: targetTrackId });
       }
     };
 
     const handleMouseUp = () => {
+      // Commit clip drag via store action on mouseup
+      if (isDraggingClip && activeClip && dragPreview) {
+        store.moveClip(activeClip.id, dragPreview.startTicks, dragPreview.trackId);
+      }
       setIsDraggingPlayhead(false);
       setIsDraggingTransform(false);
       setIsDraggingClip(false);
+      setDragPreview(null);
       setActiveHandle(null);
       setActiveHandleKfId(null);
       setActiveHandleType(null);
@@ -538,7 +544,7 @@ export default function App() {
       document.removeEventListener('mousemove', handleMouseMove);
       document.removeEventListener('mouseup', handleMouseUp);
     };
-  }, [isDraggingPlayhead, isDraggingTransform, isDraggingClip, activeHandle, transformDragStart, activeClip, store.timelineZoom, store.isSnapEnabled, activeHandleKfId, activeHandleType, graphProperty, store.currentSceneId, store.scenes]);
+  }, [isDraggingPlayhead, isDraggingTransform, isDraggingClip, activeHandle, transformDragStart, activeClip, store.timelineZoom, store.isSnapEnabled, activeHandleKfId, activeHandleType, graphProperty, store.currentSceneId, store.scenes, dragPreview]);
 
   // Global Hotkeys
   useEffect(() => {
@@ -605,9 +611,210 @@ export default function App() {
 
 
 
-  // Custom local file probing
-  // Native File picker media import and strict ffprobe parsing
-  const handleImportMedia = () => {
+  const getAssetMediaSrc = (asset?: Asset | null): string | undefined => {
+    if (!asset) return undefined;
+    if (asset.blobUrl) return asset.blobUrl;
+    if (asset.sourcePath && isTauriEnvironment()) {
+      return convertFileSrc(asset.sourcePath);
+    }
+    return undefined;
+  };
+
+  // Helper to create clips on the correct auto-detected track
+  const createClipsForAsset = (asset: Asset, durationTicks: number) => {
+    let added = false;
+
+    useEditorStore.setState((state) => {
+      if (!state.assets.some(a => a.id === asset.id)) {
+        console.error(`[Import] Asset ${asset.id} not found in store, skipping clip creation.`);
+        return {};
+      }
+
+      const currentTracks = { ...state.tracks };
+      const newClips: Record<string, Clip> = {};
+      let primaryClipId = '';
+      const startTicks = state.currentTimeTicks;
+      const sceneId = state.currentSceneId;
+
+      if (asset.type === 'svg') {
+        const videoTrackId = ensureDefaultTrack('video', currentTracks);
+        const clipId = `clip-svg-${asset.id}-${Date.now().toString(36)}`;
+        primaryClipId = clipId;
+        newClips[clipId] = {
+          id: clipId,
+          name: asset.name,
+          type: 'svg',
+          startTicks,
+          durationTicks,
+          assetId: asset.id,
+          trackId: videoTrackId,
+          transform: { posX: 960, posY: 540, anchorX: 0.5, anchorY: 0.5, scaleX: 75, scaleY: 75, rotation: 0, opacity: 100, blendMode: 'normal' },
+          keyframes: { position: false, scale: false, rotation: false, opacity: false },
+          keyframeData: [],
+          effects: [],
+          parentClipId: null,
+          enabled: true,
+          sceneId
+        };
+      } else if (asset.type === 'video') {
+        const videoTrackId = ensureDefaultTrack('video', currentTracks);
+        const audioTrackId = ensureDefaultTrack('audio', currentTracks);
+        const videoClipId = `clip-video-${asset.id}-${Date.now().toString(36)}`;
+        const audioClipId = `clip-audio-${asset.id}-${Date.now().toString(36)}`;
+        primaryClipId = videoClipId;
+        newClips[videoClipId] = {
+          id: videoClipId,
+          name: `${asset.name} (視訊)`,
+          type: 'video',
+          startTicks,
+          durationTicks,
+          assetId: asset.id,
+          trackId: videoTrackId,
+          transform: { posX: 960, posY: 540, anchorX: 0.5, anchorY: 0.5, scaleX: 100, scaleY: 100, rotation: 0, opacity: 100, blendMode: 'normal' },
+          keyframes: { position: false, scale: false, rotation: false, opacity: false },
+          keyframeData: [],
+          effects: [],
+          parentClipId: null,
+          enabled: true,
+          sceneId
+        };
+        newClips[audioClipId] = {
+          id: audioClipId,
+          name: `${asset.name} (音訊)`,
+          type: 'audio',
+          startTicks,
+          durationTicks,
+          assetId: asset.id,
+          trackId: audioTrackId,
+          transform: { posX: 0, posY: 0, anchorX: 0.5, anchorY: 0.5, scaleX: 100, scaleY: 100, rotation: 0, opacity: 100, blendMode: 'normal' },
+          keyframes: { position: false, scale: false, rotation: false, opacity: false },
+          keyframeData: [],
+          effects: [],
+          parentClipId: null,
+          enabled: true,
+          sceneId
+        };
+      } else if (asset.type === 'audio') {
+        const audioTrackId = ensureDefaultTrack('audio', currentTracks);
+        const clipId = `clip-audio-${asset.id}-${Date.now().toString(36)}`;
+        primaryClipId = clipId;
+        newClips[clipId] = {
+          id: clipId,
+          name: asset.name,
+          type: 'audio',
+          startTicks,
+          durationTicks,
+          assetId: asset.id,
+          trackId: audioTrackId,
+          transform: { posX: 0, posY: 0, anchorX: 0.5, anchorY: 0.5, scaleX: 100, scaleY: 100, rotation: 0, opacity: 100, blendMode: 'normal' },
+          keyframes: { position: false, scale: false, rotation: false, opacity: false },
+          keyframeData: [],
+          effects: [],
+          parentClipId: null,
+          enabled: true,
+          sceneId
+        };
+      }
+
+      if (!primaryClipId) return {};
+      added = true;
+
+      return {
+        clips: { ...state.clips, ...newClips },
+        tracks: currentTracks,
+        selectedClipId: primaryClipId,
+        isSaved: false
+      };
+    });
+
+    if (added) triggerToast(`已將「${asset.name}」加入時間軸！`);
+  };
+
+  // Native File picker media import with Tauri backend probing + browser fallback
+  const handleImportMedia = async () => {
+    // === Tauri Native Path: use pick_media_file + probe_media_file ===
+    if (isTauriEnvironment()) {
+      const filePath = await safeInvoke<string | null>('pick_media_file');
+      if (!filePath) {
+        triggerToast('已取消匯入');
+        return;
+      }
+
+      const fileName = filePath.split(/[/\\]/).pop() || 'unknown';
+      const fileExt = fileName.split('.').pop()?.toLowerCase() || '';
+      const isSvg = fileExt === 'svg';
+      const isVideoExt = ['mp4', 'avi', 'mov', 'mkv', 'm4v', 'flv', 'webm'].includes(fileExt);
+      const isAudioExt = ['mp3', 'wav', 'aac', 'm4a', 'ogg', 'flac'].includes(fileExt);
+
+      triggerToast(`正在導入媒體「${fileName}」...`);
+      const assetId = `asset-${Math.random().toString(36).substring(2, 11)}`;
+
+      if (isSvg) {
+        const asset: Asset = {
+          id: assetId,
+          name: fileName,
+          type: 'svg',
+          size: 'Vector',
+          duration: '--',
+          format: 'SVG',
+          sourcePath: filePath
+        };
+        store.importAsset(asset);
+        createClipsForAsset(asset, Math.round(5.0 * TICKS_PER_SECOND));
+      } else {
+        // Probe media for real metadata via ffprobe
+        const metadata = await safeInvoke<{
+          formatName: string;
+          durationSeconds: number;
+          width: number | null;
+          height: number | null;
+          fps: number | null;
+          sampleRate: number | null;
+          channels: number | null;
+        }>('probe_media_file', { path: filePath });
+
+        if (isVideoExt) {
+          const durationSeconds = metadata?.durationSeconds || 12.0;
+          const width = metadata?.width || 1920;
+          const height = metadata?.height || 1080;
+          const asset: Asset = {
+            id: assetId,
+            name: fileName,
+            type: 'video',
+            size: `${width}x${height}`,
+            duration: `${durationSeconds.toFixed(1)}s`,
+            format: metadata?.formatName?.toUpperCase() || fileExt.toUpperCase(),
+            sourcePath: filePath,
+            width, height,
+            fps: metadata?.fps || undefined,
+            sampleRate: metadata?.sampleRate || undefined,
+            channels: metadata?.channels || undefined
+          };
+          store.importAsset(asset);
+          createClipsForAsset(asset, Math.round(durationSeconds * TICKS_PER_SECOND));
+        } else if (isAudioExt) {
+          const durationSeconds = metadata?.durationSeconds || 8.5;
+          const asset: Asset = {
+            id: assetId,
+            name: fileName,
+            type: 'audio',
+            size: metadata?.sampleRate ? `${metadata.sampleRate}Hz` : '44,100Hz',
+            duration: `${durationSeconds.toFixed(1)}s`,
+            format: metadata?.formatName?.toUpperCase() || fileExt.toUpperCase(),
+            sourcePath: filePath,
+            sampleRate: metadata?.sampleRate || undefined,
+            channels: metadata?.channels || undefined
+          };
+          store.importAsset(asset);
+          createClipsForAsset(asset, Math.round(durationSeconds * TICKS_PER_SECOND));
+        } else {
+          triggerToast(`❌ 導入失敗：不支援的檔案格式「.${fileExt}」`);
+        }
+      }
+      return;
+    }
+
+    // === Browser Fallback: use <input type="file"> + blobUrl ===
     const input = document.createElement('input');
     input.type = 'file';
     input.accept = 'video/*,audio/*,.svg';
@@ -621,159 +828,57 @@ export default function App() {
       
       const isVideo = ['mp4', 'avi', 'mov', 'mkv', 'm4v', 'flv', 'webm'].includes(fileExt);
       const isAudio = ['mp3', 'wav', 'aac', 'm4a', 'ogg', 'flac'].includes(fileExt);
-      const isSvg = fileExt === 'svg';
+      const isSvgFile = fileExt === 'svg';
       
       triggerToast(`正在導入媒體「${fileName}」...`);
       
-      // Generate browser-permissive blob URL for immediate video player decoding!
       const blobUrl = URL.createObjectURL(file);
       const assetId = `asset-${Math.random().toString(36).substring(2, 11)}`;
       
-      if (isSvg) {
-        store.importAsset({
+      if (isSvgFile) {
+        const asset: Asset = {
           id: assetId,
           name: fileName,
           type: 'svg',
           size: 'Vector',
           duration: '--',
           format: 'SVG',
-          blobUrl: blobUrl
-        });
-        
-        const svgClipId = `clip-svg-${assetId}-${Date.now().toString(36)}`;
-        const svgClip: Clip = {
-          id: svgClipId,
-          name: fileName,
-          type: 'svg',
-          startTicks: store.currentTimeTicks,
-          durationTicks: Math.round(5.0 * TICKS_PER_SECOND),
-          assetId: assetId,
-          trackId: 'v2',
-          transform: { posX: 960, posY: 540, anchorX: 0.5, anchorY: 0.5, scaleX: 75, scaleY: 75, rotation: 0, opacity: 100, blendMode: 'normal' },
-          keyframes: { position: false, scale: false, rotation: false, opacity: false },
-          keyframeData: [],
-          effects: [],
-          parentClipId: null,
-          enabled: true,
-          sceneId: store.currentSceneId
+          blobUrl
         };
-        
-        useEditorStore.setState({
-          clips: { ...store.clips, [svgClipId]: svgClip },
-          selectedClipId: svgClipId,
-          isSaved: false
-        });
-        triggerToast(`已成功將向量圖「${fileName}」加入 V2 向量軌！`);
+        store.importAsset(asset);
+        createClipsForAsset(asset, Math.round(5.0 * TICKS_PER_SECOND));
       } else if (isVideo) {
-        // Create a temporary video element to extract exact dimensions & duration in real-time!
         const tempVideo = document.createElement('video');
         tempVideo.src = blobUrl;
         tempVideo.onloadedmetadata = () => {
           const durationSeconds = tempVideo.duration || 12.0;
           const width = tempVideo.videoWidth || 1920;
           const height = tempVideo.videoHeight || 1080;
-          
-          const durationStr = `${durationSeconds.toFixed(1)}s`;
-          const sizeStr = `${width}x${height}`;
-          
-          store.importAsset({
+          const asset: Asset = {
             id: assetId,
             name: fileName,
             type: 'video',
-            size: sizeStr,
-            duration: durationStr,
+            size: `${width}x${height}`,
+            duration: `${durationSeconds.toFixed(1)}s`,
             format: fileExt.toUpperCase(),
-            blobUrl: blobUrl
-          });
-          
-          const durationTicks = Math.round(durationSeconds * TICKS_PER_SECOND);
-          const videoClipId = `clip-video-${assetId}-${Date.now().toString(36)}`;
-          const videoClip: Clip = {
-            id: videoClipId,
-            name: `${fileName} (視訊)`,
-            type: 'video',
-            startTicks: store.currentTimeTicks,
-            durationTicks,
-            assetId: assetId,
-            trackId: 'v1',
-            transform: { posX: 960, posY: 540, anchorX: 0.5, anchorY: 0.5, scaleX: 100, scaleY: 100, rotation: 0, opacity: 100, blendMode: 'normal' },
-            keyframes: { position: false, scale: false, rotation: false, opacity: false },
-            keyframeData: [],
-            effects: [],
-            parentClipId: null,
-            enabled: true,
-            sceneId: store.currentSceneId
+            blobUrl,
+            width, height
           };
-          
-          const audioClipId = `clip-audio-${assetId}-${Date.now().toString(36)}`;
-          const audioClip: Clip = {
-            id: audioClipId,
-            name: `${fileName} (音訊)`,
-            type: 'audio',
-            startTicks: store.currentTimeTicks,
-            durationTicks,
-            assetId: assetId,
-            trackId: 'a1',
-            transform: { posX: 0, posY: 0, anchorX: 0.5, anchorY: 0.5, scaleX: 100, scaleY: 100, rotation: 0, opacity: 100, blendMode: 'normal' },
-            keyframes: { position: false, scale: false, rotation: false, opacity: false },
-            keyframeData: [],
-            effects: [],
-            parentClipId: null,
-            enabled: true,
-            sceneId: store.currentSceneId
-          };
-          
-          useEditorStore.setState({
-            clips: {
-              ...store.clips,
-              [videoClipId]: videoClip,
-              [audioClipId]: audioClip
-            },
-            selectedClipId: videoClipId,
-            isSaved: false
-          });
-          triggerToast(`已成功將影片「${fileName}」解碼並加入時間軸軌道！`);
+          store.importAsset(asset);
+          createClipsForAsset(asset, Math.round(durationSeconds * TICKS_PER_SECOND));
         };
         tempVideo.onerror = () => {
-          // Fallback if browser codec loading fails
-          const durationSeconds = 12.0;
-          const durationStr = `${durationSeconds.toFixed(1)}s`;
-          const sizeStr = '1920x1080';
-          
-          store.importAsset({
+          const asset: Asset = {
             id: assetId,
             name: fileName,
             type: 'video',
-            size: sizeStr,
-            duration: durationStr,
+            size: '1920x1080',
+            duration: '12.0s',
             format: fileExt.toUpperCase(),
-            blobUrl: blobUrl
-          });
-          
-          const durationTicks = Math.round(durationSeconds * TICKS_PER_SECOND);
-          const videoClipId = `clip-video-${assetId}-${Date.now().toString(36)}`;
-          const videoClip: Clip = {
-            id: videoClipId,
-            name: `${fileName} (視訊)`,
-            type: 'video',
-            startTicks: store.currentTimeTicks,
-            durationTicks,
-            assetId: assetId,
-            trackId: 'v1',
-            transform: { posX: 960, posY: 540, anchorX: 0.5, anchorY: 0.5, scaleX: 100, scaleY: 100, rotation: 0, opacity: 100, blendMode: 'normal' },
-            keyframes: { position: false, scale: false, rotation: false, opacity: false },
-            keyframeData: [],
-            effects: [],
-            parentClipId: null,
-            enabled: true,
-            sceneId: store.currentSceneId
+            blobUrl
           };
-          
-          useEditorStore.setState({
-            clips: { ...store.clips, [videoClipId]: videoClip },
-            selectedClipId: videoClipId,
-            isSaved: false
-          });
+          store.importAsset(asset);
+          createClipsForAsset(asset, Math.round(12.0 * TICKS_PER_SECOND));
           triggerToast(`已成功將影片「${fileName}」加入視訊軌道（相容模式）！`);
         };
       } else if (isAudio) {
@@ -781,84 +886,30 @@ export default function App() {
         tempAudio.src = blobUrl;
         tempAudio.onloadedmetadata = () => {
           const durationSeconds = tempAudio.duration || 8.5;
-          const durationStr = `${durationSeconds.toFixed(1)}s`;
-          const sizeStr = '44,100Hz';
-          
-          store.importAsset({
+          const asset: Asset = {
             id: assetId,
             name: fileName,
             type: 'audio',
-            size: sizeStr,
-            duration: durationStr,
+            size: '44,100Hz',
+            duration: `${durationSeconds.toFixed(1)}s`,
             format: fileExt.toUpperCase(),
-            blobUrl: blobUrl
-          });
-          
-          const durationTicks = Math.round(durationSeconds * TICKS_PER_SECOND);
-          const audioClipId = `clip-audio-${assetId}-${Date.now().toString(36)}`;
-          const audioClip: Clip = {
-            id: audioClipId,
-            name: fileName,
-            type: 'audio',
-            startTicks: store.currentTimeTicks,
-            durationTicks,
-            assetId: assetId,
-            trackId: 'a1',
-            transform: { posX: 0, posY: 0, anchorX: 0.5, anchorY: 0.5, scaleX: 100, scaleY: 100, rotation: 0, opacity: 100, blendMode: 'normal' },
-            keyframes: { position: false, scale: false, rotation: false, opacity: false },
-            keyframeData: [],
-            effects: [],
-            parentClipId: null,
-            enabled: true,
-            sceneId: store.currentSceneId
+            blobUrl
           };
-          
-          useEditorStore.setState({
-            clips: { ...store.clips, [audioClipId]: audioClip },
-            selectedClipId: audioClipId,
-            isSaved: false
-          });
-          triggerToast(`已成功將音訊「${fileName}」解碼並加入音訊軌道！`);
+          store.importAsset(asset);
+          createClipsForAsset(asset, Math.round(durationSeconds * TICKS_PER_SECOND));
         };
         tempAudio.onerror = () => {
-          const durationSeconds = 8.5;
-          const durationStr = `${durationSeconds.toFixed(1)}s`;
-          const sizeStr = '44,100Hz';
-          
-          store.importAsset({
+          const asset: Asset = {
             id: assetId,
             name: fileName,
             type: 'audio',
-            size: sizeStr,
-            duration: durationStr,
+            size: '44,100Hz',
+            duration: '8.5s',
             format: fileExt.toUpperCase(),
-            blobUrl: blobUrl
-          });
-          
-          const durationTicks = Math.round(durationSeconds * TICKS_PER_SECOND);
-          const audioClipId = `clip-audio-${assetId}-${Date.now().toString(36)}`;
-          const audioClip: Clip = {
-            id: audioClipId,
-            name: fileName,
-            type: 'audio',
-            startTicks: store.currentTimeTicks,
-            durationTicks,
-            assetId: assetId,
-            trackId: 'a1',
-            transform: { posX: 0, posY: 0, anchorX: 0.5, anchorY: 0.5, scaleX: 100, scaleY: 100, rotation: 0, opacity: 100, blendMode: 'normal' },
-            keyframes: { position: false, scale: false, rotation: false, opacity: false },
-            keyframeData: [],
-            effects: [],
-            parentClipId: null,
-            enabled: true,
-            sceneId: store.currentSceneId
+            blobUrl
           };
-          
-          useEditorStore.setState({
-            clips: { ...store.clips, [audioClipId]: audioClip },
-            selectedClipId: audioClipId,
-            isSaved: false
-          });
+          store.importAsset(asset);
+          createClipsForAsset(asset, Math.round(8.5 * TICKS_PER_SECOND));
           triggerToast(`已成功將音訊「${fileName}」加入音訊軌道（相容模式）！`);
         };
       } else {
@@ -870,112 +921,9 @@ export default function App() {
   };
 
   const handleAddAssetToTimeline = (asset: Asset) => {
-    const assetId = asset.id;
-    const isVideo = asset.type === 'video';
-    const isAudio = asset.type === 'audio';
-    const isSvg = asset.type === 'svg';
-    
     const durationSeconds = parseFloat(asset.duration) || 5.0;
     const durationTicks = Math.round(durationSeconds * TICKS_PER_SECOND);
-    
-    if (isSvg) {
-      const clipId = `clip-svg-${assetId}-${Date.now().toString(36)}`;
-      const svgClip: Clip = {
-        id: clipId,
-        name: asset.name,
-        type: 'svg',
-        startTicks: store.currentTimeTicks,
-        durationTicks,
-        assetId: assetId,
-        trackId: 'v2',
-        transform: { posX: 960, posY: 540, anchorX: 0.5, anchorY: 0.5, scaleX: 75, scaleY: 75, rotation: 0, opacity: 100, blendMode: 'normal' },
-        keyframes: { position: false, scale: false, rotation: false, opacity: false },
-        keyframeData: [],
-        effects: [],
-        parentClipId: null,
-        enabled: true,
-        sceneId: store.currentSceneId
-      };
-      
-      useEditorStore.setState({
-        clips: { ...store.clips, [clipId]: svgClip },
-        selectedClipId: clipId,
-        isSaved: false
-      });
-      triggerToast(`已將向量圖「${asset.name}」加入 V2 軌道！`);
-    } else if (isVideo) {
-      const videoClipId = `clip-video-${assetId}-${Date.now().toString(36)}`;
-      const videoClip: Clip = {
-        id: videoClipId,
-        name: `${asset.name} (視訊)`,
-        type: 'video',
-        startTicks: store.currentTimeTicks,
-        durationTicks,
-        assetId: assetId,
-        trackId: 'v1',
-        transform: { posX: 960, posY: 540, anchorX: 0.5, anchorY: 0.5, scaleX: 100, scaleY: 100, rotation: 0, opacity: 100, blendMode: 'normal' },
-        keyframes: { position: false, scale: false, rotation: false, opacity: false },
-        keyframeData: [],
-        effects: [],
-        parentClipId: null,
-        enabled: true,
-        sceneId: store.currentSceneId
-      };
-      
-      const audioClipId = `clip-audio-${assetId}-${Date.now().toString(36)}`;
-      const audioClip: Clip = {
-        id: audioClipId,
-        name: `${asset.name} (音訊)`,
-        type: 'audio',
-        startTicks: store.currentTimeTicks,
-        durationTicks,
-        assetId: assetId,
-        trackId: 'a1',
-        transform: { posX: 0, posY: 0, anchorX: 0.5, anchorY: 0.5, scaleX: 100, scaleY: 100, rotation: 0, opacity: 100, blendMode: 'normal' },
-        keyframes: { position: false, scale: false, rotation: false, opacity: false },
-        keyframeData: [],
-        effects: [],
-        parentClipId: null,
-        enabled: true,
-        sceneId: store.currentSceneId
-      };
-      
-      useEditorStore.setState({
-        clips: {
-          ...store.clips,
-          [videoClipId]: videoClip,
-          [audioClipId]: audioClip
-        },
-        selectedClipId: videoClipId,
-        isSaved: false
-      });
-      triggerToast(`已將影片「${asset.name}」加入 V1 與 A1 軌道！`);
-    } else if (isAudio) {
-      const audioClipId = `clip-audio-${assetId}-${Date.now().toString(36)}`;
-      const audioClip: Clip = {
-        id: audioClipId,
-        name: asset.name,
-        type: 'audio',
-        startTicks: store.currentTimeTicks,
-        durationTicks,
-        assetId: assetId,
-        trackId: 'a1',
-        transform: { posX: 0, posY: 0, anchorX: 0.5, anchorY: 0.5, scaleX: 100, scaleY: 100, rotation: 0, opacity: 100, blendMode: 'normal' },
-        keyframes: { position: false, scale: false, rotation: false, opacity: false },
-        keyframeData: [],
-        effects: [],
-        parentClipId: null,
-        enabled: true,
-        sceneId: store.currentSceneId
-      };
-      
-      useEditorStore.setState({
-        clips: { ...store.clips, [audioClipId]: audioClip },
-        selectedClipId: audioClipId,
-        isSaved: false
-      });
-      triggerToast(`已將音訊「${asset.name}」加入 A1 軌道！`);
-    }
+    createClipsForAsset(asset, durationTicks);
   };
 
   // Add Scene action
@@ -1000,7 +948,7 @@ export default function App() {
     }
   };
 
-  // Render / Export backend call stub
+  // Render / Export backend call — uses safeInvokeStrict to detect backend errors
   const handleStartRender = async () => {
     setIsExporting(true);
     setExportError(null);
@@ -1010,21 +958,57 @@ export default function App() {
     setExportPhase('正在準備匯出任務...');
 
     try {
-      // Send IPC request to start the export job
-      const resultJobId = await safeInvoke<string>('start_export_project', {
+      // Send IPC request with enriched DTO
+      const resultJobId = await safeInvokeStrict<string>('start_export_project', {
         projectJson: JSON.stringify(store),
         exportPath,
-        preset: exportPreset
+        filename: exportFilename,
+        preset: exportPreset,
+        format: 'mp4',
+        codec: 'h264',
+        resolution: '1920x1080',
+        fps: 30,
+        bitrate: exportBitrate
       });
-      // Stub implementation won't succeed, but in the future it would return a jobId.
-      setIsExporting(false);
-      setExportPhase('渲染完成，輸出檔案已儲存。');
-      setExportProgress(100);
-      triggerToast(`🎉 影片渲染成功！任務 ID: ${resultJobId}`);
+
+      // Only show success if we got a valid job ID
+      if (!resultJobId) {
+        throw new Error('後端未回傳有效 Job ID');
+      }
+
+      setExportPhase('渲染佇列已建立，等待進度更新...');
+      triggerToast(`匯出任務已開始，Job ID: ${resultJobId}`);
+
+      // Listen for progress events from backend
+      const unlisten = await safeListen<{
+        job_id: string;
+        progress: number;
+        status: string;
+        error: string | null;
+      }>('export_progress', (event) => {
+        const { progress, status, error } = event.payload;
+        setExportProgress(progress);
+
+        if (status === 'running') {
+          setExportPhase(`渲染中... ${progress.toFixed(1)}%`);
+        } else if (status === 'completed') {
+          setIsExporting(false);
+          setExportPhase('渲染完成，輸出檔案已儲存。');
+          setExportProgress(100);
+          triggerToast('🎉 影片渲染成功！');
+          unlisten?.();
+        } else if (status === 'failed') {
+          setIsExporting(false);
+          setExportError(error || '匯出渲染失敗');
+          setExportPhase('渲染失敗');
+          triggerToast(`❌ 匯出失敗：${error || '未知錯誤'}`);
+          unlisten?.();
+        }
+      });
     } catch (err: any) {
-      console.warn("Export started but returned an error:", err);
+      console.warn('Export failed:', err);
       setIsExporting(false);
-      setExportError(err?.toString() || '匯出渲染失敗');
+      setExportError(err?.message || err?.toString() || '匯出渲染失敗');
       setExportPhase('功能未支援 (Unsupported)');
       triggerToast('❌ 匯出功能目前尚未支援 (尚未與後端連結)');
     }
@@ -1523,6 +1507,7 @@ export default function App() {
       const chained = getChainedTransform(nestedClip, relativeTimeTicks);
       
       const asset = store.assets.find(a => a.id === nestedClip.assetId);
+      const assetMediaSrc = getAssetMediaSrc(asset);
       let aW = 1920;
       let aH = 1080;
       if (asset) {
@@ -1579,10 +1564,10 @@ export default function App() {
                 <circle cx="50" cy="55" r="18" fill="none" stroke="#A855F7" strokeWidth="4"/>
               </svg>
             ) : nestedClip.type === 'video' ? (
-              asset?.blobUrl ? (
+              assetMediaSrc ? (
                 <div style={{ width: '100%', height: '100%', mixBlendMode: nestedClip.transform.blendMode as any }}>
                   <VideoPreviewElement 
-                    src={asset.blobUrl} 
+                    src={assetMediaSrc} 
                     playheadTimeSeconds={(relativeTimeTicks - nestedClip.startTicks) / TICKS_PER_SECOND} 
                   />
                 </div>
@@ -1650,6 +1635,7 @@ export default function App() {
       const chained = getChainedTransform(clip, store.currentTimeTicks);
 
       const asset = store.assets.find(a => a.id === clip.assetId);
+      const assetMediaSrc = getAssetMediaSrc(asset);
       let aW = 1920;
       let aH = 1080;
       if (asset) {
@@ -1748,10 +1734,10 @@ export default function App() {
                 <circle cx="50" cy="55" r="18" fill="none" stroke="#A855F7" strokeWidth="4"/>
               </svg>
             ) : clip.type === 'video' ? (
-              asset?.blobUrl ? (
+              assetMediaSrc ? (
                 <div style={{ width: '100%', height: '100%', mixBlendMode: clip.transform.blendMode as any }}>
                   <VideoPreviewElement 
-                    src={asset.blobUrl} 
+                    src={assetMediaSrc} 
                     playheadTimeSeconds={(store.currentTimeTicks - clip.startTicks) / TICKS_PER_SECOND} 
                   />
                 </div>
@@ -2068,8 +2054,12 @@ export default function App() {
                   key={asset.id} 
                   className={`asset-card ${activeClip?.assetId === asset.id ? 'selected' : ''}`} 
                   draggable
-                  title="雙擊將此素材加入目前時間軸軌道"
+                  title="雙擊將此素材加入目前時間軸軌道，或拖曳至軌道"
                   onDoubleClick={() => handleAddAssetToTimeline(asset)}
+                  onDragStart={(e) => {
+                    e.dataTransfer.setData('application/slopeffect-asset', asset.id);
+                    e.dataTransfer.effectAllowed = 'copy';
+                  }}
                 >
                   <div className={`asset-thumb ${asset.type}`}>
                     {asset.type === 'video' ? <Monitor size={14} /> : asset.type === 'audio' ? <Mic size={14} /> : <Triangle size={14} />}
@@ -2636,7 +2626,66 @@ export default function App() {
                               </button>
                             </div>
                           </div>
-                          <div className={`track-content${isAudio ? ' audio-track-bg' : ''}`} style={{ pointerEvents: track.locked ? 'none' : 'auto' }}>
+                          <div
+                            className={`track-content${isAudio ? ' audio-track-bg' : ''}`}
+                            style={{ pointerEvents: track.locked ? 'none' : 'auto' }}
+                            onDragOver={(e) => {
+                              if (e.dataTransfer.types.includes('application/slopeffect-asset')) {
+                                e.preventDefault();
+                                e.dataTransfer.dropEffect = 'copy';
+                              }
+                            }}
+                            onDrop={(e) => {
+                              const droppedAssetId = e.dataTransfer.getData('application/slopeffect-asset');
+                              if (!droppedAssetId) return;
+                              const droppedAsset = store.assets.find(a => a.id === droppedAssetId);
+                              if (!droppedAsset) return;
+                              // Type check: audio assets only on audio tracks, video/svg only on video tracks
+                              const isAssetAudio = droppedAsset.type === 'audio';
+                              if (isAssetAudio !== isAudio) {
+                                triggerToast(`❌ 類型不符：${droppedAsset.type} 素材不能放到 ${track.type} 軌道`);
+                                return;
+                              }
+                              // Calculate startTicks from drop X position
+                              const trackContentEl = e.currentTarget;
+                              const rect = trackContentEl.getBoundingClientRect();
+                              const dropX = e.clientX - rect.left;
+                              let startTicks = (dropX / store.timelineZoom) * TICKS_PER_SECOND;
+                              if (startTicks < 0) startTicks = 0;
+                              if (store.isSnapEnabled) {
+                                const snapInterval = TICKS_PER_SECOND * 0.5;
+                                startTicks = Math.round(startTicks / snapInterval) * snapInterval;
+                              }
+                              // Create clip on this specific track
+                              const durationSeconds = parseFloat(droppedAsset.duration) || 5.0;
+                              const durationTicks = Math.round(durationSeconds * TICKS_PER_SECOND);
+                              const clipId = `clip-${droppedAsset.type}-${droppedAssetId}-${Date.now().toString(36)}`;
+                              const newClip: Clip = {
+                                id: clipId,
+                                name: droppedAsset.name,
+                                type: droppedAsset.type as Clip['type'],
+                                startTicks,
+                                durationTicks,
+                                assetId: droppedAssetId,
+                                trackId,
+                                transform: isAssetAudio
+                                  ? { posX: 0, posY: 0, anchorX: 0.5, anchorY: 0.5, scaleX: 100, scaleY: 100, rotation: 0, opacity: 100, blendMode: 'normal' }
+                                  : { posX: 960, posY: 540, anchorX: 0.5, anchorY: 0.5, scaleX: 100, scaleY: 100, rotation: 0, opacity: 100, blendMode: 'normal' },
+                                keyframes: { position: false, scale: false, rotation: false, opacity: false },
+                                keyframeData: [],
+                                effects: [],
+                                parentClipId: null,
+                                enabled: true,
+                                sceneId: store.currentSceneId
+                              };
+                              useEditorStore.setState({
+                                clips: { ...store.clips, [clipId]: newClip },
+                                selectedClipId: clipId,
+                                isSaved: false
+                              });
+                              triggerToast(`已將「${droppedAsset.name}」拖入 ${track.name} 軌道！`);
+                            }}
+                          >
                             {trackClips.map(c => (
                               <div
                                 key={c.id}

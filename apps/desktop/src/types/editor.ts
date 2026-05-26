@@ -77,4 +77,10 @@ export interface Asset {
   duration: string;
   format: string;
   blobUrl?: string;
+  sourcePath?: string;     // Real filesystem path (from Tauri pick_media_file)
+  width?: number;          // Video width (px)
+  height?: number;         // Video height (px)
+  fps?: number;            // Video frame rate
+  sampleRate?: number;     // Audio sample rate (Hz)
+  channels?: number;       // Audio channel count
 }
